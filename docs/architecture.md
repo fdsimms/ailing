@@ -1,0 +1,82 @@
+# Architecture decisions
+
+Decisions made after `docs/brief.md` was written, with the reason for each. Where this file and the
+brief disagree, this file is newer.
+
+## Kept from the brief
+
+- **Python server.** Milestone 3's Spanish needs lemma matching, and the good tools for that are
+  Python. PyThaiNLP alone would not justify it.
+- **SQLite.** One user, light writes, one machine.
+- **Anki over MCP.** The only way into the droplet. The server uses the Python `mcp` SDK as a plain
+  client, with a 45-second timeout on every call.
+- **React + TypeScript client**, mobile-first, installable on the home screen.
+
+## Hosting
+
+- **Fly.io**, as its own app, separate from the dundundun MCP app. Never on the Anki droplet.
+- **One always-on machine** (512 MB, since PyThaiNLP is heavy). Small enough to cost a few dollars a
+  month, and it means background work isn't cut off by the machine stopping.
+- **No cron.** When the app is opened, the server refreshes the lexicon if the snapshot is over 24
+  hours old, and tops up the queue of ready texts in the background.
+- **The server serves the client.** FastAPI serves the built React app as static files: one app, one
+  deploy, same origin. The Dockerfile builds the client with Node and copies it into the Python image.
+- **Backups.** SQLite on a Fly volume, backed up continuously with Litestream to Tigris (Fly's
+  S3-compatible storage). Fly's own volume snapshots only last about 5 days.
+- **Login.** The app is public and holds paid API keys. One long passphrase, entered once on the
+  phone and kept in a long-lived cookie, checked on every API route.
+
+## Lexicon
+
+- A note's tier comes from its weakest reviewed card: **mature** if the lowest interval is 21 days or
+  more, **young** if reviewed but below that, **unreviewed** if no card has been reviewed
+  (`server/src/ailing/tiers.py`).
+- Mature and young both count as known for coverage. The prompt asks the model to favor mature words.
+- **Partial:** a word that only appears inside a longer deck entry (รับ inside รับอะไรดี). It counts as
+  unknown for coverage, and its gloss can point at the entry it came from.
+- Only the latest snapshot is kept. No history.
+
+## Generation and coverage
+
+- **The server re-segments every line.** The model's `|` breaks are not trusted for coverage: the
+  server removes them, splits the line again with the lexicon-first segmenter, and computes coverage
+  from that. The model's breaks are only a cross-check, and the asterisks still mark stretch words.
+  The reader's tap targets come from the server's split.
+- **Revise rather than regenerate.** A text under the 95% floor goes back to the model with the
+  unknown words named ("replace ทอน, กลิ่น"). At most 3 attempts in total.
+- **Prompt caching.** The lexicon is the same on every call that day, so it sits in a cached prefix.
+- **Glosses come with the text.** The model returns an English gloss for every word not in the
+  lexicon in the same response, so tap-to-gloss never needs its own API call. Lexicon words use the
+  deck's `Meaning`.
+- **Stretch words** are 1-3 words due today or still young. No random assignment.
+
+## Topics
+
+- You keep a short list of favorite topics. The server keeps one or two ready texts per topic, so
+  reading those never waits. A new topic waits for one generation (about half a minute) the first
+  time.
+
+## Audio
+
+- Azure neural voices: Niwat (male) and Premwadee (female) for the two speakers, so they sound
+  clearly different.
+- Each line is synthesized once at normal speed and cached. The 0.7x to 1.0x speed control uses the
+  browser's playback rate, so there are no extra files per speed.
+
+## Logging
+
+- Per text: date, language, mode, token count, verified coverage, stretch words, words glossed,
+  words flagged unknown, rating, audio speed, listen-only or not, time spent.
+- The rating adjusts the next text (too hard: higher coverage target, fewer stretch words; too easy:
+  the reverse). The Milestone 1 exit check reads the log.
+- **Dropped:** the brief's randomized experiment (exposed versus held-back words, Anki outcome
+  comparison, kill criterion). The owner decided on 19 October 2026 not to build it.
+
+## Build order
+
+1. Coverage checker, with re-segmenting
+2. Lexicon snapshot (against fixtures until the Anki connection details exist)
+3. Generator
+4. Reader and login
+5. Audio
+6. Deploy to Fly.io

@@ -220,6 +220,11 @@ Thai, offline mode, and any reimplementation of FSRS.
 
 ## Measurement plan
 
+> **Dropped on 19 October 2026 by the owner.** The randomized exposed/held-back comparison and the
+> kill criterion below are not being built. What remains is the per-text log, which the passage
+> rating adaptation (principle 11) and the Milestone 1 exit check still need. See
+> `docs/architecture.md`.
+
 Treat the app as an experiment on one learner: randomize which words get extra exposure, then let
 Anki's own review outcomes say whether it helped.
 

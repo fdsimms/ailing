@@ -92,5 +92,4 @@ None of these are present in this environment, so nothing here was mocked.
 
 ## Decisions made after the spike
 
-- **Hosting:** the app server goes on Fly.io, as its own app with a volume for SQLite, separate from
-  the dundundun MCP app. Never on the Anki droplet.
+- **Hosting:** see `docs/architecture.md`.
