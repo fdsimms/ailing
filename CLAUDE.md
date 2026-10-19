@@ -41,7 +41,8 @@ to Anki, languages other than Thai, offline mode, reimplementing FSRS, Drill and
 ## Stack and architecture
 
 - Server: Python (PyThaiNLP is Python), FastAPI as the default, SQLite for lexicon, texts, audio
-  index and logs. Client: mobile-first React + TypeScript web app, installable on the home screen.
+  index and logs. Client: an Expo / React Native
+  iOS app in `client/`, on the same Expo, React Native and TypeScript versions as dundundun.
 - All Anki traffic goes through **one gateway** (an MCP client to AnkiMCP via ankimcp.ai). **Every
   call has a 45-second timeout**, because the tunnel hangs rather than errors when Anki is
   unreachable. If it's down, the app runs from yesterday's snapshot.
