@@ -25,6 +25,9 @@ brief disagree, this file is newer.
   The reader shows the server's word split as tappable words: a tap shows the gloss, and marking a
   word unknown is a second tap inside the gloss, so looking up a half-known word doesn't also flag it.
 - Leaving a text by any route logs the reading once, rated or not, which takes it off the ready queue.
+  A text left by closing the app isn't logged, so it's served again next time.
+- When the server rejects the saved passphrase (it was changed), the app forgets it and asks again.
+  Topics also has a Log out.
 
 ## Hosting
 
@@ -33,8 +36,11 @@ brief disagree, this file is newer.
   month, and it means background work isn't cut off by the machine stopping.
 - **No cron.** When the app is opened, the server refreshes the lexicon if the snapshot is over 24
   hours old, and tops up the queue of ready texts in the background.
-- **Backups.** SQLite on a Fly volume, backed up continuously with Litestream to Tigris (Fly's
-  S3-compatible storage). Fly's own volume snapshots only last about 5 days.
+- **Backups.** SQLite on a Fly volume, backed up continuously with Litestream (v0.5.17, copied
+  from its official image) to Tigris, Fly's S3-compatible storage. `server/start.sh` runs the
+  server under `litestream replicate` whenever `BUCKET_NAME` is set (`fly storage create` sets
+  it), restoring the database first if the volume is empty; without it, the server runs alone.
+  Fly's own volume snapshots only last about 5 days.
 - **Login.** The app is public and holds paid API keys. One long passphrase, entered once in the
   app and kept in the iOS keychain (`expo-secure-store`), sent with every API call and checked on
   every API route.
@@ -76,6 +82,18 @@ brief disagree, this file is newer.
   (`READY_PER_FAVORITE` in `engine.py`), topped up in the background after each request, so reading
   those never waits. A new topic, or a favorite whose text was just read, waits for one generation
   (about half a minute).
+- **A text is written in the background, never inside a request.** Three attempts and the audio
+  can take longer than an iPhone waits on one request, so `/next` answers 202 while a text is being
+  written and the app asks again every few seconds. One write per topic at a time; a request that
+  arrives while one is running waits for it rather than starting a second.
+- **A failed write is reported once and then cools down.** The next request for that topic gets
+  the reason (503 with a sentence). Asking again after that is a deliberate retry. The background
+  top-up skips that topic for 30 minutes (`FAILURE_COOLDOWN`) and carries on with the others, so a
+  topic that keeps missing the floor doesn't keep spending. Each topic reports its state (`ready`,
+  `writing`, `failed`, `idle`) for the app to show.
+- A text is stored as `pending` until its audio is made, then `ready`; one left pending by a
+  restart is made ready at startup. A text that missed the floor is stored as `dropped`, never
+  served, so its cost is still on record.
 - A text leaves the queue once a reading is logged for it, rated or not, so the same text is never
   served twice.
 
@@ -105,7 +123,10 @@ Every `/api` route needs the passphrase as `Authorization: Bearer <passphrase>`;
   key was set. An Azure failure leaves that line silent and never blocks the text.
 - The 0.7x to 1.0x speed control is the player's rate with pitch kept (`expo-audio`), so there's one
   file per line whatever the speed. "Play" runs the dialogue line by line; each line has its own
-  replay button. Playback continues with the ringer on silent and the screen locked.
+  replay button. Playback continues with the ringer on silent and the screen locked; the player
+  keeps the audio session active between lines, or iOS could suspend the app in the gap. A line
+  whose audio fails to load is skipped with a note. Thai plays over other audio (a podcast keeps
+  going), as the owner chose.
 - The app fetches audio itself, with the passphrase in the request's headers.
 - The `expo-audio` plugin is configured with no microphone permission: the app never records.
 
@@ -113,11 +134,15 @@ Every `/api` route needs the passphrase as `Authorization: Bearer <passphrase>`;
 
 - Per text: date, language, mode, token count, verified coverage, stretch words, words glossed,
   words flagged unknown, rating, audio speed, listen-only or not, time spent.
-- The rating adjusts the next text (too hard: coverage target up 1 point, one fewer stretch word;
-  too easy: the reverse), within a 95% to 99% target and 1 to 3 stretch words
-  (`server/src/ailing/difficulty.py`). The Milestone 1 exit check reads the log.
-- Each text also records its model, tokens and cost in dollars, so the real cost per text can be
-  read straight from the `texts` table.
+- The rating adjusts the difficulty of texts written after it (too hard: coverage target up 1
+  point, one fewer stretch word; too easy: the reverse), within a 95% to 99% target and 1 to 3
+  stretch words (`server/src/ailing/difficulty.py`). A text already waiting in a favorite's queue
+  keeps the difficulty it was written at, so a rating shows up one text later; the owner chose that
+  over discarding queued texts (19 October 2026). The Milestone 1 exit check reads the log.
+- A reading posted twice for the same text (a retried request) is counted once.
+- Each text also records the model that actually answered (a refusal fallback can change it), its
+  tokens and its cost in dollars, dropped texts included, so the real cost per text can be read
+  straight from the `texts` table.
 - **Dropped:** the brief's randomized experiment (exposed versus held-back words, Anki outcome
   comparison, kill criterion). The owner decided on 19 October 2026 not to build it.
 
