@@ -52,8 +52,9 @@ brief disagree, this file is newer.
   The reader's tap targets come from the server's split.
 - **Revise rather than regenerate.** A text under the 95% floor goes back to the model with the
   unknown words named ("replace ทอน, กลิ่น"). At most 3 attempts in total.
-- **Model:** `claude-opus-5-5` at `medium` effort, with server-side refusal fallbacks
-  (`fallbacks: "default"`). The reply is JSON held to a schema (`output_config.format`): a title,
+- **Model:** `claude-sonnet-5-5` at `medium` effort, with server-side refusal fallbacks
+  (`fallbacks: "default"`). The owner chose Sonnet to start, at half Opus's price; revisit once real
+  texts show whether its Thai holds up within the vocabulary. The reply is JSON held to a schema (`output_config.format`): a title,
   lines (speaker, `|`-split text, English), and glosses for words off the list. Revisions are
   appended to the same conversation, never edited, so the model's earlier thinking stays valid.
   `server/src/ailing/generator.py`.
