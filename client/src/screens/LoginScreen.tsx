@@ -6,7 +6,13 @@ import { ErrorNote, PrimaryButton } from "../components/ui";
 import { savePassphrase, serverUrl } from "../passphrase";
 import { font, radius, spacing, useColors } from "../theme";
 
-export function LoginScreen({ onLoggedIn }: { onLoggedIn: (passphrase: string) => void }) {
+export function LoginScreen({
+  notice,
+  onLoggedIn,
+}: {
+  notice?: string | null;
+  onLoggedIn: (passphrase: string) => void;
+}) {
   const c = useColors();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,6 +40,7 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (passphrase: string) =
       <Text style={[styles.sub, { color: c.textSecondary }]}>
         Enter the passphrase set on the server. You only need to do this once.
       </Text>
+      {notice ? <Text style={[styles.sub, { color: c.text }]}>{notice}</Text> : null}
       {url ? (
         <>
           <TextInput

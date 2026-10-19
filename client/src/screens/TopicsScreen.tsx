@@ -11,18 +11,28 @@ import {
 } from "react-native";
 
 import { type Api, ApiError, type Topic } from "../api";
-import { Card, ErrorNote, Hint, PillButton, SectionLabel } from "../components/ui";
+import { Card, ErrorNote, Hint, PillButton, SectionLabel, TextButton } from "../components/ui";
 import { font, radius, spacing, useColors } from "../theme";
 
 // While a favorite is still being written, check back this often.
 const WRITING_POLL_MS = 10_000;
 
-export function TopicsScreen({ api, onOpen }: { api: Api; onOpen: (topic: Topic) => void }) {
+export function TopicsScreen({
+  api,
+  onOpen,
+  onLogOut,
+}: {
+  api: Api;
+  onOpen: (topic: Topic) => void;
+  onLogOut: () => void;
+}) {
   const c = useColors();
   const [topics, setTopics] = useState<Topic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [newName, setNewName] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -37,7 +47,8 @@ export function TopicsScreen({ api, onOpen }: { api: Api; onOpen: (topic: Topic)
     load();
   }, [load]);
 
-  const writing = topics?.some((t) => t.favorite && t.ready === 0) ?? false;
+  // Poll only while the server says a text is being written; a failed write stops it.
+  const writing = topics?.some((t) => t.state === "writing") ?? false;
   useEffect(() => {
     if (!writing) return;
     const id = setInterval(load, WRITING_POLL_MS);
@@ -46,13 +57,17 @@ export function TopicsScreen({ api, onOpen }: { api: Api; onOpen: (topic: Topic)
 
   async function add() {
     const name = newName.trim();
-    if (!name) return;
+    if (!name || adding) return;
+    setAdding(true);
+    setAddError(null);
     try {
       await api.addTopic(name);
       setNewName("");
       await load();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn't add that topic.");
+      setAddError(e instanceof ApiError ? e.message : "Couldn't add that topic. Try again.");
+    } finally {
+      setAdding(false);
     }
   }
 
@@ -111,7 +126,7 @@ export function TopicsScreen({ api, onOpen }: { api: Api; onOpen: (topic: Topic)
               <TopicRow key={t.id} topic={t} first={i === 0} onOpen={onOpen} onStar={toggleFavorite} />
             ))}
           </Card>
-          <Hint>Other topics have no text waiting, so opening one takes about half a minute.</Hint>
+          <Hint>Opening a topic with no text ready takes about half a minute.</Hint>
         </>
       ) : null}
 
@@ -126,9 +141,13 @@ export function TopicsScreen({ api, onOpen }: { api: Api; onOpen: (topic: Topic)
           onSubmitEditing={add}
           returnKeyType="done"
         />
-        <PillButton label="Add" onPress={add} />
+        {adding ? <ActivityIndicator style={styles.adding} /> : <PillButton label="Add" onPress={add} />}
       </View>
+      {addError ? <ErrorNote message={addError} /> : null}
       <Hint>New topics start as favorites, so a text is written for them right away.</Hint>
+      <View style={styles.logOut}>
+        <TextButton label="Log out" onPress={onLogOut} />
+      </View>
     </ScrollView>
   );
 }
@@ -145,12 +164,10 @@ function TopicRow({
   onStar: (t: Topic) => void;
 }) {
   const c = useColors();
+  const state = STATE_TEXT[topic.state];
+  // The star and the row are siblings, so VoiceOver can reach each one on its own.
   return (
-    <Pressable
-      onPress={() => onOpen(topic)}
-      accessibilityRole="button"
-      style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}
-    >
+    <View style={styles.row}>
       <Pressable
         onPress={() => onStar(topic)}
         hitSlop={10}
@@ -161,21 +178,40 @@ function TopicRow({
           {topic.favorite ? "★" : "☆"}
         </Text>
       </Pressable>
-      <View style={[styles.rowBody, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.separator }]}>
+      <Pressable
+        onPress={() => onOpen(topic)}
+        accessibilityRole="button"
+        accessibilityLabel={state ? `${topic.name}, ${state}` : topic.name}
+        accessibilityHint="Opens a text on this topic"
+        style={({ pressed }) => [
+          styles.rowBody,
+          !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.separator },
+          { opacity: pressed ? 0.7 : 1 },
+        ]}
+      >
         <Text style={[styles.name, { color: c.text }]}>{topic.name}</Text>
-        {topic.ready > 0 ? (
+        {topic.state === "ready" ? (
           <Text style={[styles.ready, { backgroundColor: c.speakerB, color: c.speakerBText }]}>Ready</Text>
-        ) : topic.favorite ? (
+        ) : topic.state === "writing" ? (
           <View style={styles.writing}>
             <ActivityIndicator size="small" />
             <Text style={[styles.writingText, { color: c.textTertiary }]}>Writing a text</Text>
           </View>
+        ) : topic.state === "failed" ? (
+          <Text style={[styles.writingText, { color: c.textSecondary }]}>Couldn't write one</Text>
         ) : null}
         <Text style={[styles.chevron, { color: c.textTertiary }]}>›</Text>
-      </View>
-    </Pressable>
+      </Pressable>
+    </View>
   );
 }
+
+const STATE_TEXT: Record<Topic["state"], string | null> = {
+  ready: "ready",
+  writing: "writing a text",
+  failed: "couldn't write one",
+  idle: null,
+};
 
 const styles = StyleSheet.create({
   content: { paddingTop: spacing.sm, paddingBottom: spacing.xl },
@@ -216,4 +252,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   input: { flex: 1, fontSize: font.lg, minHeight: 44 },
+  adding: { marginHorizontal: spacing.smd },
+  logOut: { marginTop: spacing.lg },
 });

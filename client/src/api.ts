@@ -1,7 +1,11 @@
 // The server's API (server/src/ailing/app.py). Every call sends the passphrase; the server's own
 // error sentences are passed through, since they're written to be shown as they are.
 
-export type Topic = { id: number; name: string; favorite: boolean; ready: number };
+// "writing": a text is being written now. "failed": the last write failed and the server is
+// waiting before it tries that topic again by itself.
+export type TopicState = "ready" | "writing" | "failed" | "idle";
+
+export type Topic = { id: number; name: string; favorite: boolean; ready: number; state: TopicState };
 
 export type Word = {
   text: string;
@@ -44,7 +48,14 @@ export class ApiError extends Error {
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
-export function createApi(baseUrl: string, passphrase: string, fetchImpl: Fetch = fetch) {
+// `onUnauthorized` runs when the server rejects the passphrase (it was changed on the server), so
+// the app can forget it and ask again instead of failing every call.
+export function createApi(
+  baseUrl: string,
+  passphrase: string,
+  fetchImpl: Fetch = fetch,
+  onUnauthorized?: () => void,
+) {
   const root = baseUrl.replace(/\/+$/, "");
 
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -61,8 +72,11 @@ export function createApi(baseUrl: string, passphrase: string, fetchImpl: Fetch 
     } catch {
       throw new ApiError("Couldn't reach the server. Check your connection and try again.", 0);
     }
+    if (response.status === 401) onUnauthorized?.();
     if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
-    return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+    return response.status === 204 || response.status === 202
+      ? (undefined as T)
+      : ((await response.json()) as T);
   }
 
   return {
@@ -71,7 +85,9 @@ export function createApi(baseUrl: string, passphrase: string, fetchImpl: Fetch 
     addTopic: (name: string) => call<Topic>("POST", "/api/topics", { name, favorite: true }),
     setFavorite: (id: number, favorite: boolean) =>
       call<Topic>("PATCH", `/api/topics/${id}`, { favorite }),
-    nextText: (topicId: number) => call<ReaderText>("POST", `/api/topics/${topicId}/next`),
+    // null while the server is still writing the text (202): ask again in a few seconds.
+    nextText: async (topicId: number) =>
+      (await call<ReaderText | undefined>("POST", `/api/topics/${topicId}/next`)) ?? null,
     logReading: (textId: number, log: ReadingLog) =>
       call<void>("POST", `/api/texts/${textId}/reading`, log),
     // For the audio player, which fetches the file itself and so needs the passphrase too.

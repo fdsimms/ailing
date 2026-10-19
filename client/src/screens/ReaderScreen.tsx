@@ -10,7 +10,14 @@
 // ==== Audio ====
 // One expo-audio player is reused for every line. "Play" runs the dialogue from the current line to
 // the end (`nextLine` in playback.ts); a line's replay button plays that line alone. Speed is the
-// player's rate, with pitch kept, so each line is one file whatever the speed.
+// player's rate, with pitch kept, so each line is one file whatever the speed. The audio session
+// stays active between lines (`keepAudioSessionActive`): expo-audio otherwise drops it after each
+// line, and with the screen locked iOS can suspend the app before the next line starts. A line that
+// fails to load counts as finished, so "Play" moves on instead of stalling.
+//
+// ==== Loading ====
+// `/next` answers 202 while the server writes a text, so `load` asks again every few seconds.
+// `loadId` and `mounted` make a load that's been superseded (Next, then Back) drop its result.
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -38,6 +45,12 @@ type Tapped = { word: Word; x: number; y: number };
 // The speed chosen last, kept for the rest of the app's run.
 let lastRate = 0.9;
 
+const POLL_MS = 3_000;
+// Three attempts and the audio rarely take more than two minutes; past this, something is wrong.
+const WRITE_WAIT_MS = 4 * 60_000;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; onBack: () => void }) {
   const c = useColors();
   const [text, setText] = useState<ReaderText | null>(null);
@@ -48,16 +61,27 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   const [ended, setEnded] = useState(false);
   const [rating, setRating] = useState<Rating | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [writing, setWriting] = useState(false);
   const logged = useRef(false);
+  const mounted = useRef(true);
+  const loadId = useRef(0);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
 
-  const player = useAudioPlayer(null);
+  const player = useAudioPlayer(null, { keepAudioSessionActive: true });
   const status = useAudioPlayerStatus(player);
   const [current, setCurrent] = useState<number | null>(null);
   const [playingAll, setPlayingAll] = useState(false);
   const [rate, setRate] = useState(lastRate);
+  const [silentLine, setSilentLine] = useState<number | null>(null);
 
   function playLine(i: number, all: boolean) {
     if (!text) return;
+    setSilentLine(null);
     player.replace(api.audioSource(text.id, i));
     player.setPlaybackRate(rate, "high");
     player.play();
@@ -69,8 +93,11 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   function togglePlay() {
     if (!text) return;
     if (status.playing) player.pause();
-    else if (current !== null && !status.didJustFinish && status.currentTime < status.duration) player.play();
-    else {
+    else if (current !== null && !status.didJustFinish && status.currentTime < status.duration) {
+      player.setPlaybackRate(rate, "high");
+      player.play();
+      setSession((s) => (s ? heard(s, rate) : s));
+    } else {
       const start = firstLine(text.lines, current === null ? 0 : current + 1) ?? firstLine(text.lines);
       if (start !== null) playLine(start, true);
     }
@@ -91,21 +118,47 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
     // Reacts to a line ending only.
   }, [status.didJustFinish]);
 
+  // A line whose audio didn't load (the server had none for it): note it and move on.
+  useEffect(() => {
+    if (!status.error || current === null || !text) return;
+    setSilentLine(current);
+    const next = nextLine(text.lines, current, playingAll);
+    if (next !== null) playLine(next, true);
+    else setPlayingAll(false);
+    // Reacts to a load error only.
+  }, [status.error]);
+
   async function load() {
+    const id = ++loadId.current;
+    const stillWanted = () => mounted.current && id === loadId.current;
     player.pause();
     setCurrent(null);
     setPlayingAll(false);
+    setSilentLine(null);
     setText(null);
     setError(null);
     setEnded(false);
     setRating(null);
+    setWriting(false);
     logged.current = false;
     try {
-      const next = await api.nextText(topic.id);
+      const deadline = Date.now() + WRITE_WAIT_MS;
+      let next = await api.nextText(topic.id);
+      while (next === null) {
+        if (!stillWanted()) return;
+        setWriting(true);
+        if (Date.now() > deadline) {
+          throw new ApiError("Writing this text is taking longer than usual. Try again in a minute.", 0);
+        }
+        await wait(POLL_MS);
+        if (!stillWanted()) return;
+        next = await api.nextText(topic.id);
+      }
+      if (!stillWanted()) return;
       setText(next);
       setSession(startSession(next, Date.now()));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn't get a text. Try again.");
+      if (stillWanted()) setError(e instanceof ApiError ? e.message : "Couldn't get a text. Try again.");
     }
   }
 
@@ -117,6 +170,14 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   // Every way out of a text logs it once, which also takes it off the ready queue.
   async function finish(then: "next" | "back") {
     player.pause();
+    if (leaving) {
+      // Back while "Next text" is still logging: drop the load that would follow it.
+      if (then === "back") {
+        loadId.current++;
+        onBack();
+      }
+      return;
+    }
     if (text && session && !logged.current) {
       logged.current = true;
       setLeaving(true);
@@ -125,9 +186,10 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       } catch {
         // The reading is lost, not the user's place: carry on either way.
       } finally {
-        setLeaving(false);
+        if (mounted.current) setLeaving(false);
       }
     }
+    if (!mounted.current) return;
     if (then === "next") load();
     else onBack();
   }
@@ -148,7 +210,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
         <View style={styles.loading}>
           <ActivityIndicator />
           <Text style={[styles.loadingText, { color: c.textSecondary }]}>
-            {topic.ready > 0 ? "Opening the text" : "Writing a text. This takes about half a minute."}
+            {writing ? "Writing a text. This takes about half a minute." : "Opening the text"}
           </Text>
         </View>
       ) : null}
@@ -168,7 +230,12 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
           ) : null}
           <View style={styles.toggle}>
             <Text style={[styles.toggleText, { color: c.textSecondary }]}>Show English</Text>
-            <Switch value={english} onValueChange={setEnglish} trackColor={{ true: c.accent }} />
+            <Switch
+              value={english}
+              onValueChange={setEnglish}
+              trackColor={{ true: c.accent }}
+              accessibilityLabel="Show English"
+            />
           </View>
           {text.lines.map((line, i) => (
             <View
@@ -240,6 +307,9 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       ) : null}
       {text && !ended && firstLine(text.lines) === null ? (
         <Hint>No audio for this text.</Hint>
+      ) : null}
+      {text && !ended && silentLine !== null ? (
+        <Hint>{`Line ${silentLine + 1} has no audio.`}</Hint>
       ) : null}
 
       {text && session && ended ? (
@@ -340,6 +410,9 @@ function WordView({
     <Pressable
       onPress={(e) => onPress(word, e.nativeEvent.pageX, e.nativeEvent.pageY)}
       accessibilityRole="button"
+      accessibilityLabel={[word.text, word.stretch && "practice word", flagged && "marked unknown"]
+        .filter(Boolean)
+        .join(", ")}
       accessibilityHint="Shows what this word means"
       style={[
         styles.word,
@@ -365,6 +438,8 @@ function WordView({
 }
 
 const POPOVER_WIDTH = 290;
+// Space between the tap and the popover's edge, enough to clear the tapped word.
+const POPOVER_GAP = 28;
 
 function GlossPopover({
   tapped,
@@ -379,10 +454,19 @@ function GlossPopover({
 }) {
   const c = useColors();
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  // Measured on first layout (drawn invisible until then), since a long gloss wraps.
+  const [popHeight, setPopHeight] = useState(0);
+  useEffect(() => setPopHeight(0), [tapped]);
   if (!tapped) return null;
   const left = Math.min(Math.max(tapped.x - 40, spacing.md), width - POPOVER_WIDTH - spacing.md);
-  // Above the word when there's room, so the finger and the word both stay visible.
-  const place = tapped.y > 260 ? { bottom: height - tapped.y + 28 } : { top: tapped.y + 28 };
+  // Above the word when it clears the status bar, so the finger and the word both stay visible;
+  // otherwise below it, and never past the bottom edge.
+  const above = tapped.y - POPOVER_GAP - popHeight;
+  const top = Math.min(
+    above >= insets.top + spacing.sm ? above : tapped.y + POPOVER_GAP,
+    height - popHeight - insets.bottom - spacing.sm,
+  );
   const status =
     tapped.word.status === "known"
       ? "In your deck"
@@ -393,10 +477,11 @@ function GlossPopover({
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
       <View
+        onLayout={(e) => setPopHeight(e.nativeEvent.layout.height)}
         style={[
           styles.popover,
-          place,
-          { left, backgroundColor: c.card, borderColor: c.separator, shadowColor: c.shadow },
+          { top, left, opacity: popHeight > 0 ? 1 : 0 },
+          { backgroundColor: c.card, borderColor: c.separator, shadowColor: c.shadow },
         ]}
       >
         <Text style={[styles.popWord, { color: c.text }]}>{tapped.word.text}</Text>
