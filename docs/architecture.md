@@ -83,7 +83,8 @@ brief disagree, this file is newer.
 ## Build order
 
 1. Coverage checker, with re-segmenting (done)
-2. Lexicon snapshot (against fixtures until the Anki connection details exist)
+2. Lexicon snapshot (done, against a fake Anki; the MCP client itself waits on the connection
+   details)
 3. Generator
 4. Reader and login
 5. Audio
