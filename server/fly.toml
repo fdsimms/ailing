@@ -1,0 +1,42 @@
+# The Read & Listen server on Fly.io. Deploy from this directory (server/):
+#   fly deploy
+# docs/deploy.md has the whole setup.
+
+# Fly app names are global, so this may need changing to one that's free.
+app = "ailing"
+primary_region = "ewr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  AILING_DB_PATH = "/data/ailing.db"
+  AILING_AUDIO_DIR = "/data/audio"
+
+# The SQLite database and the audio cache live here. One volume means one
+# machine, which is the only shape that works: SQLite can't be shared.
+[[mounts]]
+  source = "ailing_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always on, so text generation running in the background isn't cut off by
+  # the machine stopping (docs/architecture.md, Hosting).
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+# PyThaiNLP's word list and the lexicon tries need more than 256 MB.
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
