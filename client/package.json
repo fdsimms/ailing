@@ -2,23 +2,32 @@
   "name": "ailing-client",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
+  "main": "index.ts",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "start": "expo start",
+    "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "jest"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "expo": "~57.0.16",
+    "expo-audio": "~57.0.5",
+    "expo-secure-store": "~57.0.1",
+    "expo-status-bar": "~57.0.0",
+    "react": "19.2.3",
+    "react-native": "0.86.2"
   },
   "devDependencies": {
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
-    "typescript": "^5.5.4",
-    "vite": "^5.4.0",
-    "vitest": "^2.0.5"
+    "@types/jest": "30.0.0",
+    "@types/react": "~19.2.0",
+    "babel-preset-expo": "~57.0.8",
+    "jest": "~30.4.2",
+    "typescript": "~7.0.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "transform": {
+      "^.+\\.[jt]sx?$": "babel-jest"
+    }
   }
 }

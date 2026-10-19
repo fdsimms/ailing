@@ -7,3 +7,6 @@ __pycache__/
 dist/
 *.sqlite
 .env
+.expo/
+ios/
+android/

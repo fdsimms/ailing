@@ -125,6 +125,9 @@ constraints.
 
 ## Architecture
 
+> **Changed on 19 October 2026 by the owner.** The client is an Expo / React Native iOS app like
+> dundundun, not a home-screen web app. See `docs/architecture.md`.
+
 The app server talks to Anki only through one gateway, and only lightly: a lexicon snapshot once a
 day, plus Drill's due cards and grades. Everything else runs from the cached lexicon.
 

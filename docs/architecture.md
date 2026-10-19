@@ -10,7 +10,16 @@ brief disagree, this file is newer.
 - **SQLite.** One user, light writes, one machine.
 - **Anki over MCP.** The only way into the droplet. The server uses the Python `mcp` SDK as a plain
   client, with a 45-second timeout on every call.
-- **React + TypeScript client**, mobile-first, installable on the home screen.
+
+## Client
+
+- **An Expo / React Native iOS app** (`client/`), not the brief's home-screen web app. The owner
+  chose this on 19 October 2026 to match dundundun. It uses the same Expo, React Native and
+  TypeScript versions as dundundun, and the same test setup (Jest on pure logic, no component tests).
+- Built with EAS and installed through TestFlight.
+- Background audio is on (`UIBackgroundModes: audio`), so listening keeps going with the screen
+  locked or in another app. That was the main thing a web app couldn't do well.
+- The server's address is plain build config. Nothing secret ships in the app.
 
 ## Hosting
 
@@ -19,12 +28,11 @@ brief disagree, this file is newer.
   month, and it means background work isn't cut off by the machine stopping.
 - **No cron.** When the app is opened, the server refreshes the lexicon if the snapshot is over 24
   hours old, and tops up the queue of ready texts in the background.
-- **The server serves the client.** FastAPI serves the built React app as static files: one app, one
-  deploy, same origin. The Dockerfile builds the client with Node and copies it into the Python image.
 - **Backups.** SQLite on a Fly volume, backed up continuously with Litestream to Tigris (Fly's
   S3-compatible storage). Fly's own volume snapshots only last about 5 days.
-- **Login.** The app is public and holds paid API keys. One long passphrase, entered once on the
-  phone and kept in a long-lived cookie, checked on every API route.
+- **Login.** The app is public and holds paid API keys. One long passphrase, entered once in the
+  app and kept in the iOS keychain (`expo-secure-store`), sent with every API call and checked on
+  every API route.
 
 ## Lexicon
 
@@ -61,7 +69,7 @@ brief disagree, this file is newer.
 - Azure neural voices: Niwat (male) and Premwadee (female) for the two speakers, so they sound
   clearly different.
 - Each line is synthesized once at normal speed and cached. The 0.7x to 1.0x speed control uses the
-  browser's playback rate, so there are no extra files per speed.
+  player's playback rate (`expo-audio`), so there are no extra files per speed.
 
 ## Logging
 

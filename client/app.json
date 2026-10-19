@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Ailing",
+    "slug": "ailing",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.fdsimms.ailing",
+      "supportsTablet": false,
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"],
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "plugins": ["expo-secure-store"]
+  }
+}
