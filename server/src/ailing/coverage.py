@@ -121,6 +121,11 @@ def check(lines: Iterable[str], lexicon: Lexicon) -> Coverage:
     return Coverage(tuple(tokens), tuple(dict.fromkeys(stretch)))
 
 
+def is_word(token: str) -> bool:
+    """False for spaces and punctuation, which are shown but never counted or tapped."""
+    return _counts(token)
+
+
 def _counts(token: str) -> bool:
     return bool(token.strip()) and not _NOT_A_WORD.match(token)
 

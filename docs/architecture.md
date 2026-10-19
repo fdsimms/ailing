@@ -67,9 +67,26 @@ brief disagree, this file is newer.
 
 ## Topics
 
-- You keep a short list of favorite topics. The server keeps one or two ready texts per topic, so
-  reading those never waits. A new topic waits for one generation (about half a minute) the first
-  time.
+- You keep a short list of favorite topics. The server keeps one ready text per favorite
+  (`READY_PER_FAVORITE` in `engine.py`), topped up in the background after each request, so reading
+  those never waits. A new topic, or a favorite whose text was just read, waits for one generation
+  (about half a minute).
+- A text leaves the queue once a reading is logged for it, rated or not, so the same text is never
+  served twice.
+
+## Server API
+
+Every `/api` route needs the passphrase as `Authorization: Bearer <passphrase>`; with no
+`APP_PASSPHRASE` set, they all refuse. `/health` is open. The routes are listed at the top of
+`server/src/ailing/app.py`.
+
+- A text comes back already split into words by the server, each with its status (known, partial,
+  unknown, or none for punctuation), its gloss and whether it's a stretch word. The app never
+  segments Thai itself.
+- When something isn't set up yet (no API key, no word list), the route answers 503 with a sentence
+  the app can show as is.
+- The production app is built by `uvicorn --factory ailing.app:production_app`, so importing the
+  module opens no database.
 
 ## Audio
 
@@ -82,8 +99,11 @@ brief disagree, this file is newer.
 
 - Per text: date, language, mode, token count, verified coverage, stretch words, words glossed,
   words flagged unknown, rating, audio speed, listen-only or not, time spent.
-- The rating adjusts the next text (too hard: higher coverage target, fewer stretch words; too easy:
-  the reverse). The Milestone 1 exit check reads the log.
+- The rating adjusts the next text (too hard: coverage target up 1 point, one fewer stretch word;
+  too easy: the reverse), within a 95% to 99% target and 1 to 3 stretch words
+  (`server/src/ailing/difficulty.py`). The Milestone 1 exit check reads the log.
+- Each text also records its model, tokens and cost in dollars, so the real cost per text can be
+  read straight from the `texts` table.
 - **Dropped:** the brief's randomized experiment (exposed versus held-back words, Anki outcome
   comparison, kill criterion). The owner decided on 19 October 2026 not to build it.
 
@@ -93,7 +113,7 @@ brief disagree, this file is newer.
 2. Lexicon snapshot (done, against a fake Anki; the MCP client itself waits on the connection
    details)
 3. Generator (done, tested against a scripted model; its first real call waits on the API key)
-4. Reader and login
+4. Reader and login: the server API is done; the reader screen in the app is next
 5. Audio
 6. Deploy to Fly.io. The setup (`server/Dockerfile`, `server/fly.toml`, `docs/deploy.md`) came
    early, so the server can be live while the rest is built.

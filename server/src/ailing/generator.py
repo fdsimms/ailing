@@ -13,7 +13,7 @@ conversation (append-only, so the model's thinking stays valid across turns).
 
 import json
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 import anthropic
@@ -29,8 +29,41 @@ MAX_ATTEMPTS = 3
 MAX_STRETCH = 3
 STRETCH_MIN_USES = 2
 
-# Sent as a list of message dicts; returns the parsed draft and the assistant content to append.
-Ask = Callable[[list[dict[str, Any]]], Coroutine[Any, Any, tuple[dict[str, Any], list[Any]]]]
+# Per million tokens: input, output, cache read, cache write (5-minute cache, 1.25x input).
+PRICES = {
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
+    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
+}
+
+
+@dataclass(frozen=True)
+class Usage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    def __add__(self, other: "Usage") -> "Usage":
+        return Usage(
+            self.input_tokens + other.input_tokens,
+            self.output_tokens + other.output_tokens,
+            self.cache_read_tokens + other.cache_read_tokens,
+            self.cache_write_tokens + other.cache_write_tokens,
+        )
+
+    def cost_usd(self, model: str = MODEL) -> float:
+        inp, out, read, write = PRICES[model]
+        return (
+            self.input_tokens * inp
+            + self.output_tokens * out
+            + self.cache_read_tokens * read
+            + self.cache_write_tokens * write
+        ) / 1_000_000
+
+
+# Sent as a list of message dicts; returns the parsed draft, the assistant content to append, and
+# the tokens the call used.
+Ask = Callable[[list[dict[str, Any]]], Coroutine[Any, Any, tuple[dict[str, Any], list[Any], Usage]]]
 
 
 class GenerationFailed(Exception):
@@ -65,6 +98,7 @@ class Generated:
     attempts: int
     passed: bool
     missing_glosses: tuple[str, ...]
+    usage: Usage = Usage()
 
 
 DRAFT_SCHEMA: dict[str, Any] = {
@@ -172,9 +206,12 @@ def revision_message(coverage: Coverage, short_stretch: list[str], floor: float)
 async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generated:
     messages: list[dict[str, Any]] = [{"role": "user", "content": request_message(request)}]
     result: Generated | None = None
+    usage = Usage()
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        draft, content = await ask(messages)
+        draft, content, used = await ask(messages)
+        usage += used
         result, short_stretch = _assess(draft, lexicon, request, attempt)
+        result = replace(result, usage=usage)
         if result.passed:
             return result
         if attempt < MAX_ATTEMPTS:
@@ -223,7 +260,7 @@ def claude_ask(client: anthropic.AsyncAnthropic, entries: list[Entry]) -> Ask:
         "format": {"type": "json_schema", "schema": DRAFT_SCHEMA},
     }
 
-    async def ask(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Any]]:
+    async def ask(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Any], Usage]:
         response = await client.beta.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -244,6 +281,13 @@ def claude_ask(client: anthropic.AsyncAnthropic, entries: list[Entry]) -> Ask:
             draft = json.loads(text)
         except json.JSONDecodeError as e:
             raise GenerationFailed("The response wasn't valid JSON") from e
-        return draft, list(response.content)
+        u = response.usage
+        used = Usage(
+            u.input_tokens,
+            u.output_tokens,
+            u.cache_read_input_tokens or 0,
+            u.cache_creation_input_tokens or 0,
+        )
+        return draft, list(response.content), used
 
     return ask

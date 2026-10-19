@@ -10,6 +10,7 @@ from ailing.generator import (
     MODEL,
     GenerationFailed,
     TextRequest,
+    Usage,
     claude_ask,
     generate,
     system_prompt,
@@ -49,10 +50,12 @@ class ScriptedModel:
         self.drafts = list(drafts)
         self.sent: list[list[dict[str, Any]]] = []
 
-    async def __call__(self, messages: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Any]]:
+    async def __call__(
+        self, messages: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], list[Any], Usage]:
         self.sent.append(list(messages))
         d = self.drafts.pop(0)
-        return d, [{"type": "text", "text": "draft"}]
+        return d, [{"type": "text", "text": "draft"}], Usage(100, 50, 1000, 0)
 
 
 def run(model: ScriptedModel, request: TextRequest) -> Any:
@@ -152,7 +155,13 @@ class FakeClient:
 
 def response(stop_reason: str, text: str | None) -> Any:
     content = [SimpleNamespace(type="text", text=text)] if text is not None else []
-    return SimpleNamespace(stop_reason=stop_reason, content=content)
+    usage = SimpleNamespace(
+        input_tokens=120,
+        output_tokens=900,
+        cache_read_input_tokens=15000,
+        cache_creation_input_tokens=None,
+    )
+    return SimpleNamespace(stop_reason=stop_reason, content=content, usage=usage)
 
 
 def test_claude_ask_sends_the_cached_lexicon_schema_and_fallback() -> None:
@@ -160,9 +169,10 @@ def test_claude_ask_sends_the_cached_lexicon_schema_and_fallback() -> None:
 
     client = FakeClient(response("end_turn", json.dumps(GOOD)))
     ask = claude_ask(client, ENTRIES)  # type: ignore[arg-type]
-    parsed, _content = asyncio.run(ask([{"role": "user", "content": "hi"}]))
+    parsed, _content, used = asyncio.run(ask([{"role": "user", "content": "hi"}]))
 
     assert parsed == GOOD
+    assert used == Usage(120, 900, 15000, 0)
     call = client.calls[0]
     assert call["model"] == MODEL
     assert call["system"][0]["cache_control"] == {"type": "ephemeral"}
@@ -182,3 +192,14 @@ def test_claude_ask_turns_bad_responses_into_generation_failed(
     ask = claude_ask(FakeClient(response(stop_reason, text)), ENTRIES)  # type: ignore[arg-type]
     with pytest.raises(GenerationFailed):
         asyncio.run(ask([{"role": "user", "content": "hi"}]))
+
+
+def test_usage_adds_up_across_attempts() -> None:
+    bad = draft("ทอน|ฉัน")
+    result = run(ScriptedModel(bad, GOOD), TextRequest("food", (MANGO,)))
+    assert result.usage == Usage(200, 100, 2000, 0)
+
+
+def test_cost_uses_the_model_prices() -> None:
+    # 1M of each at Sonnet 5.5 prices: $2 in, $10 out, $0.20 cache read, $2.50 cache write.
+    assert Usage(1_000_000, 1_000_000, 1_000_000, 1_000_000).cost_usd() == pytest.approx(14.70)
