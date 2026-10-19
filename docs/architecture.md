@@ -82,9 +82,10 @@ brief disagree, this file is newer.
 
 ## Build order
 
-1. Coverage checker, with re-segmenting
+1. Coverage checker, with re-segmenting (done)
 2. Lexicon snapshot (against fixtures until the Anki connection details exist)
 3. Generator
 4. Reader and login
 5. Audio
-6. Deploy to Fly.io
+6. Deploy to Fly.io. The setup (`server/Dockerfile`, `server/fly.toml`, `docs/deploy.md`) came
+   early, so the server can be live while the rest is built.
