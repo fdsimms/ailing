@@ -10,7 +10,7 @@ export type Word = {
   stretch: boolean;
 };
 
-export type TextLine = { speaker: "A" | "B"; english: string; words: Word[] };
+export type TextLine = { speaker: "A" | "B"; english: string; words: Word[]; audio: boolean };
 
 export type ReaderText = {
   id: number;
@@ -74,6 +74,11 @@ export function createApi(baseUrl: string, passphrase: string, fetchImpl: Fetch 
     nextText: (topicId: number) => call<ReaderText>("POST", `/api/topics/${topicId}/next`),
     logReading: (textId: number, log: ReadingLog) =>
       call<void>("POST", `/api/texts/${textId}/reading`, log),
+    // For the audio player, which fetches the file itself and so needs the passphrase too.
+    audioSource: (textId: number, line: number) => ({
+      uri: `${root}/api/texts/${textId}/lines/${line}/audio`,
+      headers: { Authorization: `Bearer ${passphrase}` },
+    }),
   };
 }
 

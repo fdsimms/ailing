@@ -1,10 +1,17 @@
-// The reader: a dialogue split into words by the server, a gloss on tap, and a rating at the end.
-// Audio comes with the audio PR; until then this is read-only.
+// The reader: a dialogue split into words by the server, a gloss on tap, audio line by line, and a
+// rating at the end.
 //
 // ==== Layout ====
-// NavBar, title, practice words, the Show English switch, the lines, then a Done button. "Done"
-// swaps the lines for the end view (rating, stats, words marked unknown). The gloss popover is a
-// transparent Modal, so a tap's page coordinates place it directly.
+// NavBar, title, practice words, the Show English switch, the lines (each with its own replay
+// button), then a Done button, with the player bar pinned under the scroll view. "Done" swaps the
+// lines for the end view (rating, stats, words marked unknown). The gloss popover is a transparent
+// Modal, so a tap's page coordinates place it directly.
+//
+// ==== Audio ====
+// One expo-audio player is reused for every line. "Play" runs the dialogue from the current line to
+// the end (`nextLine` in playback.ts); a line's replay button plays that line alone. Speed is the
+// player's rate, with pitch kept, so each line is one file whatever the speed.
+import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -17,13 +24,19 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { type Api, ApiError, type Rating, type ReaderText, type Topic, type Word } from "../api";
 import { Card, ErrorNote, Hint, NavBar, PillButton, PrimaryButton, SectionLabel, TextButton } from "../components/ui";
-import { formatDuration, isFlagged, lookUp, type Session, startSession, toLog, toggleFlag } from "../session";
+import { firstLine, nextLine } from "../playback";
+import { RATES } from "../playbackRate";
+import { formatDuration, heard, isFlagged, lookUp, type Session, startSession, toLog, toggleFlag } from "../session";
 import { font, radius, spacing, thaiFont, useColors } from "../theme";
 
 type Tapped = { word: Word; x: number; y: number };
+
+// The speed chosen last, kept for the rest of the app's run.
+let lastRate = 0.9;
 
 export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; onBack: () => void }) {
   const c = useColors();
@@ -37,7 +50,51 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   const [leaving, setLeaving] = useState(false);
   const logged = useRef(false);
 
+  const player = useAudioPlayer(null);
+  const status = useAudioPlayerStatus(player);
+  const [current, setCurrent] = useState<number | null>(null);
+  const [playingAll, setPlayingAll] = useState(false);
+  const [rate, setRate] = useState(lastRate);
+
+  function playLine(i: number, all: boolean) {
+    if (!text) return;
+    player.replace(api.audioSource(text.id, i));
+    player.setPlaybackRate(rate, "high");
+    player.play();
+    setCurrent(i);
+    setPlayingAll(all);
+    setSession((s) => (s ? heard(s, rate) : s));
+  }
+
+  function togglePlay() {
+    if (!text) return;
+    if (status.playing) player.pause();
+    else if (current !== null && !status.didJustFinish && status.currentTime < status.duration) player.play();
+    else {
+      const start = firstLine(text.lines, current === null ? 0 : current + 1) ?? firstLine(text.lines);
+      if (start !== null) playLine(start, true);
+    }
+  }
+
+  function changeRate(next: number) {
+    lastRate = next;
+    setRate(next);
+    player.setPlaybackRate(next, "high");
+    if (status.playing) setSession((s) => (s ? heard(s, next) : s));
+  }
+
+  useEffect(() => {
+    if (!status.didJustFinish || current === null || !text) return;
+    const next = nextLine(text.lines, current, playingAll);
+    if (next !== null) playLine(next, true);
+    else setPlayingAll(false);
+    // Reacts to a line ending only.
+  }, [status.didJustFinish]);
+
   async function load() {
+    player.pause();
+    setCurrent(null);
+    setPlayingAll(false);
     setText(null);
     setError(null);
     setEnded(false);
@@ -59,6 +116,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
 
   // Every way out of a text logs it once, which also takes it off the ready queue.
   async function finish(then: "next" | "back") {
+    player.pause();
     if (text && session && !logged.current) {
       logged.current = true;
       setLeaving(true);
@@ -113,7 +171,14 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
             <Switch value={english} onValueChange={setEnglish} trackColor={{ true: c.accent }} />
           </View>
           {text.lines.map((line, i) => (
-            <View key={i} style={[styles.line, { borderBottomColor: c.separator }]}>
+            <View
+              key={i}
+              style={[
+                styles.line,
+                { borderBottomColor: c.separator },
+                current === i && { backgroundColor: c.card, marginHorizontal: 0, paddingHorizontal: spacing.md },
+              ]}
+            >
               <Text
                 style={[
                   styles.speaker,
@@ -138,12 +203,43 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
                 </View>
                 {english ? <Text style={[styles.english, { color: c.textSecondary }]}>{line.english}</Text> : null}
               </View>
+              {line.audio ? (
+                <Pressable
+                  onPress={() => playLine(i, false)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Play line ${i + 1}`}
+                  hitSlop={6}
+                  style={[styles.replay, { backgroundColor: c.accentSubtle }]}
+                >
+                  <Text style={[styles.replayIcon, { color: c.accentText }]}>▶︎</Text>
+                </Pressable>
+              ) : null}
             </View>
           ))}
           <View style={styles.doneButton}>
-            <PrimaryButton label="Done" onPress={() => setEnded(true)} />
+            <PrimaryButton
+              label="Done"
+              onPress={() => {
+                player.pause();
+                setEnded(true);
+              }}
+            />
           </View>
         </ScrollView>
+      ) : null}
+
+      {text && !ended && firstLine(text.lines) !== null ? (
+        <PlayerBar
+          playing={status.playing}
+          current={current}
+          total={text.lines.length}
+          rate={rate}
+          onToggle={togglePlay}
+          onRate={changeRate}
+        />
+      ) : null}
+      {text && !ended && firstLine(text.lines) === null ? (
+        <Hint>No audio for this text.</Hint>
       ) : null}
 
       {text && session && ended ? (
@@ -314,6 +410,66 @@ function GlossPopover({
   );
 }
 
+function PlayerBar({
+  playing,
+  current,
+  total,
+  rate,
+  onToggle,
+  onRate,
+}: {
+  playing: boolean;
+  current: number | null;
+  total: number;
+  rate: number;
+  onToggle: () => void;
+  onRate: (rate: number) => void;
+}) {
+  const c = useColors();
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[
+        styles.player,
+        { backgroundColor: c.card, borderTopColor: c.separator, paddingBottom: insets.bottom + spacing.smd },
+      ]}
+    >
+      <View style={styles.playerRow}>
+        <Pressable
+          onPress={onToggle}
+          accessibilityRole="button"
+          accessibilityLabel={playing ? "Pause" : "Play"}
+          style={({ pressed }) => [styles.play, { backgroundColor: c.accent, opacity: pressed ? 0.7 : 1 }]}
+        >
+          <Text style={[styles.playIcon, { color: c.onAccent }]}>{playing ? "❚❚" : "▶︎"}</Text>
+        </Pressable>
+        <View style={styles.playerText}>
+          <Text style={[styles.playerTitle, { color: c.text }]}>
+            {current === null ? "Play the dialogue" : `Line ${current + 1} of ${total}`}
+          </Text>
+          <Text style={[styles.playerHint, { color: c.textSecondary }]}>Tap a line's ▶︎ to replay it</Text>
+        </View>
+      </View>
+      <View style={[styles.segments, { backgroundColor: c.tertiary }]} accessibilityRole="radiogroup">
+        {RATES.map((r) => (
+          <Pressable
+            key={r}
+            onPress={() => onRate(r)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: r === rate }}
+            accessibilityLabel={`Speed ${r}`}
+            style={[styles.segment, r === rate && { backgroundColor: c.card }]}
+          >
+            <Text style={[styles.segmentText, { color: r === rate ? c.text : c.textSecondary }]}>
+              {r.toFixed(1)}×
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function Stat({ value, label }: { value: string; label: string }) {
   const c = useColors();
   return (
@@ -408,6 +564,30 @@ const styles = StyleSheet.create({
   flaggedWord: { fontSize: font.lg },
   flaggedGloss: { flex: 1, fontSize: font.md },
   endButtons: { padding: spacing.md, paddingTop: spacing.lg, gap: spacing.xs },
+  replay: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 6,
+  },
+  replayIcon: { fontSize: font.md },
+  player: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.smd,
+    gap: spacing.smd,
+  },
+  playerRow: { flexDirection: "row", alignItems: "center", gap: 14 },
+  play: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
+  playIcon: { fontSize: font.xl },
+  playerText: { flex: 1 },
+  playerTitle: { fontSize: font.md, fontWeight: "600" },
+  playerHint: { fontSize: font.sm, marginTop: 2 },
+  segments: { flexDirection: "row", borderRadius: 9, padding: 2 },
+  segment: { flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 7 },
+  segmentText: { fontSize: font.sm, fontWeight: "600" },
   popover: {
     position: "absolute",
     width: POPOVER_WIDTH,

@@ -1,4 +1,5 @@
 // Three screens and no navigation library: login, topics, and the reader for one topic.
+import { setAudioModeAsync } from "expo-audio";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
@@ -27,6 +28,8 @@ function Root() {
 
   useEffect(() => {
     loadPassphrase().then(setPassphrase, () => setPassphrase(null));
+    // Keeps playing with the ringer switch on silent, and with the screen locked.
+    setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true }).catch(() => {});
   }, []);
 
   const api = useMemo(() => (url && passphrase ? createApi(url, passphrase) : null), [url, passphrase]);
