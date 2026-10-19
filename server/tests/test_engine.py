@@ -1,6 +1,7 @@
 import asyncio
 import random
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from scripted import BAD, ENTRIES, GOOD, ScriptedModel
@@ -118,3 +119,75 @@ def test_a_reading_without_a_rating_leaves_difficulty_alone() -> None:
 def test_reading_an_unknown_text_is_a_key_error() -> None:
     with pytest.raises(KeyError):
         engine(ScriptedModel(GOOD)).record_reading(42, reading(None))
+
+
+class FakeVoice:
+    def __init__(self, fail_on: str | None = None) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.fail_on = fail_on
+
+    async def __call__(self, text: str, voice: str) -> bytes:
+        from ailing.tts import TtsFailed
+
+        self.calls.append((text, voice))
+        if text == self.fail_on:
+            raise TtsFailed("Azure answered 500")
+        return f"mp3:{text}".encode()
+
+
+def speaking_engine(tmp_path: Path, voice: FakeVoice | None) -> Engine:
+    from ailing.tts import AudioCache
+
+    conn = store.connect(":memory:")
+    store.save_snapshot(conn, ENTRIES, NOW)
+    return Engine(
+        conn,
+        ScriptedModel(GOOD).ask_for,
+        None,
+        lambda: NOW,
+        random.Random(1),
+        synthesize=voice,
+        audio=AudioCache(tmp_path),
+        voices={"A": "voice-a", "B": "voice-b"},
+    )
+
+
+def test_a_new_text_gets_audio_for_each_line_in_its_speakers_voice(tmp_path: Path) -> None:
+    voice = FakeVoice()
+    e = speaking_engine(tmp_path, voice)
+    topic = store.add_topic(e.conn, "Food stall", True, NOW)
+
+    text = asyncio.run(e.next_text(topic.id))
+
+    assert voice.calls == [
+        ("ฉันอยากกินข้าวเหนียวมะม่วงครับ", "voice-a"),
+        ("ข้าวเหนียวมะม่วงครับ!", "voice-b"),
+    ]
+    assert e.has_audio(text.id, 0) and e.has_audio(text.id, 1)
+
+
+def test_a_failed_line_stays_silent_and_the_text_is_still_served(tmp_path: Path) -> None:
+    e = speaking_engine(tmp_path, FakeVoice(fail_on="ข้าวเหนียวมะม่วงครับ!"))
+    topic = store.add_topic(e.conn, "Food stall", True, NOW)
+
+    text = asyncio.run(e.next_text(topic.id))
+
+    assert e.has_audio(text.id, 0)
+    assert not e.has_audio(text.id, 1)
+
+
+def test_missing_audio_is_made_on_request_and_then_cached(tmp_path: Path) -> None:
+    e = speaking_engine(tmp_path, None)
+    topic = store.add_topic(e.conn, "Food stall", True, NOW)
+    text = asyncio.run(e.next_text(topic.id))
+    assert asyncio.run(e.line_audio(text, 0)) is None  # no text to speech yet
+
+    voice = FakeVoice()
+    e.synthesize = voice
+    path = asyncio.run(e.line_audio(text, 0))
+    again = asyncio.run(e.line_audio(text, 0))
+
+    assert path is not None and path.read_bytes().startswith(b"mp3:")
+    assert again == path
+    assert len(voice.calls) == 1
+    assert asyncio.run(e.line_audio(text, 9)) is None

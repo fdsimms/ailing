@@ -1,5 +1,6 @@
 import random
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -121,3 +122,46 @@ def test_logging_a_reading() -> None:
         c.post(f"/api/texts/{text['id']}/reading", json={"rating": "meh"}, headers=AUTH).status_code
         == 422
     )
+
+
+def speaking_client(tmp_path: Path) -> TestClient:
+    from ailing.tts import AudioCache
+
+    async def voice(text: str, name: str) -> bytes:
+        return b"ID3" + text.encode()
+
+    conn = store.connect(":memory:")
+    store.save_snapshot(conn, ENTRIES, NOW)
+    engine = Engine(
+        conn,
+        ScriptedModel(GOOD).ask_for,
+        None,
+        lambda: NOW,
+        random.Random(1),
+        synthesize=voice,
+        audio=AudioCache(tmp_path),
+    )
+    return TestClient(create_app(engine, "open sesame"))
+
+
+def test_lines_say_whether_they_have_audio() -> None:
+    c = client()  # no text to speech set up
+    topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
+    text = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH).json()
+    assert [line["audio"] for line in text["lines"]] == [False, False]
+
+
+def test_a_lines_audio_is_served_as_mp3(tmp_path: Path) -> None:
+    c = speaking_client(tmp_path)
+    topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
+    text = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH).json()
+    assert all(line["audio"] for line in text["lines"])
+
+    response = c.get(f"/api/texts/{text['id']}/lines/0/audio", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.content.startswith(b"ID3")
+    assert c.get(f"/api/texts/{text['id']}/lines/0/audio").status_code == 401
+    assert c.get(f"/api/texts/{text['id']}/lines/9/audio", headers=AUTH).status_code == 404
+    assert c.get("/api/texts/999/lines/0/audio", headers=AUTH).status_code == 404

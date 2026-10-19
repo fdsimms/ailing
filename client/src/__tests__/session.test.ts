@@ -1,5 +1,5 @@
 import type { ReaderText } from "../api";
-import { formatDuration, isFlagged, lookUp, startSession, toggleFlag, toLog } from "../session";
+import { formatDuration, heard, isFlagged, lookUp, startSession, toggleFlag, toLog } from "../session";
 
 const TEXT: ReaderText = { id: 7, topicId: 1, title: "t", coverage: 0.97, stretch: [], lines: [] };
 
@@ -38,4 +38,10 @@ test("a clock that went backwards logs zero seconds", () => {
 test("durations read as minutes and seconds", () => {
   expect(formatDuration(0)).toBe("0:00");
   expect(formatDuration(134)).toBe("2:14");
+});
+
+test("the log carries the speed audio last played at", () => {
+  const s = startSession(TEXT, 0);
+  expect(toLog(s, 0, null, false).audio_speed).toBeNull();
+  expect(toLog(heard(heard(s, 0.8), 0.9), 0, null, false).audio_speed).toBe(0.9);
 });

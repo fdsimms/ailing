@@ -7,10 +7,11 @@ export type Session = {
   startedAt: number;
   glossed: string[];
   flagged: string[];
+  audioSpeed: number | null; // the speed audio last played at, if it played at all
 };
 
 export function startSession(text: ReaderText, now: number): Session {
-  return { textId: text.id, startedAt: now, glossed: [], flagged: [] };
+  return { textId: text.id, startedAt: now, glossed: [], flagged: [], audioSpeed: null };
 }
 
 export function lookUp(session: Session, word: string): Session {
@@ -22,6 +23,10 @@ export function toggleFlag(session: Session, word: string): Session {
     ? session.flagged.filter((w) => w !== word)
     : [...session.flagged, word];
   return { ...session, flagged };
+}
+
+export function heard(session: Session, speed: number): Session {
+  return session.audioSpeed === speed ? session : { ...session, audioSpeed: speed };
 }
 
 export function isFlagged(session: Session, word: string): boolean {
@@ -39,7 +44,7 @@ export function toLog(
     finished,
     words_glossed: session.glossed,
     words_flagged: session.flagged,
-    audio_speed: null, // set once the reader plays audio
+    audio_speed: session.audioSpeed,
     listen_only: false,
     seconds: Math.max(0, Math.round((now - session.startedAt) / 1000)),
   };

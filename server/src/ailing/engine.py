@@ -11,15 +11,17 @@ import random
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 from ailing import store
-from ailing.coverage import Lexicon
+from ailing.coverage import Lexicon, parse_line
 from ailing.difficulty import adapt
 from ailing.gateway import CallTool
 from ailing.generator import Ask, GenerationFailed, TextRequest, generate
 from ailing.lexicon import Entry, lexicon_from
 from ailing.store import Reading, StoredText
 from ailing.stretch import pick_stretch
+from ailing.tts import DEFAULT_VOICES, AudioCache, Synthesize, TtsFailed
 
 READY_PER_FAVORITE = 1
 
@@ -38,12 +40,18 @@ class Engine:
         call_tool: CallTool | None,
         clock: Callable[[], datetime] = datetime.now,
         rng: random.Random | None = None,
+        synthesize: Synthesize | None = None,
+        audio: AudioCache | None = None,
+        voices: dict[str, str] | None = None,
     ) -> None:
         self.conn = conn
         self.ask_for = ask_for
         self.call_tool = call_tool
         self.clock = clock
         self.rng = rng or random.Random()
+        self.synthesize = synthesize
+        self.audio = audio
+        self.voices = voices or DEFAULT_VOICES
         self._topic_locks: dict[int, asyncio.Lock] = {}
         self._topping_up = asyncio.Lock()
 
@@ -106,7 +114,37 @@ class Engine:
                 difficulty.floor,
                 self.clock(),
             )
-            return store.get_text(self.conn, text_id)
+            text = store.get_text(self.conn, text_id)
+            assert text is not None
+            await self.make_audio(text)
+            return text
+
+    def has_audio(self, text_id: int, line: int) -> bool:
+        return self.audio is not None and self.audio.has(text_id, line)
+
+    async def make_audio(self, text: StoredText) -> None:
+        """Speaks every line that has no audio yet. A failure leaves that line silent and is
+        logged; it never keeps the text from being served."""
+        for i in range(len(text.lines)):
+            await self.line_audio(text, i)
+
+    async def line_audio(self, text: StoredText, line: int) -> Path | None:
+        """The cached MP3 for one line, made now if it's missing and text to speech is set up."""
+        if self.audio is None or not 0 <= line < len(text.lines):
+            return None
+        if self.audio.has(text.id, line):
+            return self.audio.path(text.id, line)
+        if self.synthesize is None:
+            return None
+        spoken, _ = parse_line(text.lines[line].text)
+        voice = self.voices.get(text.lines[line].speaker, self.voices["A"])
+        try:
+            mp3 = await self.synthesize(spoken, voice)
+        except TtsFailed as e:
+            log.warning("No audio for text %d line %d: %s", text.id, line, e)
+            return None
+        self.audio.write(text.id, line, mp3)
+        return self.audio.path(text.id, line)
 
     async def top_up(self) -> None:
         """Refreshes the lexicon if it's a day old, then makes sure each favorite topic has a ready

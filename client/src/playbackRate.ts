@@ -8,3 +8,6 @@ export function clampRate(rate: number): number {
   const stepped = Math.round(rate / RATE_STEP) * RATE_STEP;
   return Math.min(MAX_RATE, Math.max(MIN_RATE, Number(stepped.toFixed(1))));
 }
+
+// The speeds the reader offers, slowest first.
+export const RATES = [0.7, 0.8, 0.9, 1.0];

@@ -95,10 +95,19 @@ Every `/api` route needs the passphrase as `Authorization: Bearer <passphrase>`;
 
 ## Audio
 
-- Azure neural voices: Niwat (male) and Premwadee (female) for the two speakers, so they sound
-  clearly different.
-- Each line is synthesized once at normal speed and cached. The 0.7x to 1.0x speed control uses the
-  player's playback rate (`expo-audio`), so there are no extra files per speed.
+- Azure neural voices, one per speaker: `th-TH-NiwatNeural` (male) for A and `th-TH-PremwadeeNeural`
+  (female) for B. `AZURE_VOICE_A` and `AZURE_VOICE_B` override them without a code change. The voice
+  names and the synthesis path weren't verifiable from the build sandbox (`server/src/ailing/tts.py`
+  says which parts were), so the first real call is the check.
+- Each line is spoken once at normal speed and cached as an MP3 on the volume
+  (`AILING_AUDIO_DIR/<text>/<line>.mp3`). A new text gets its audio before it counts as ready; a line
+  with no audio yet is made when it's first asked for, which covers texts written before the Azure
+  key was set. An Azure failure leaves that line silent and never blocks the text.
+- The 0.7x to 1.0x speed control is the player's rate with pitch kept (`expo-audio`), so there's one
+  file per line whatever the speed. "Play" runs the dialogue line by line; each line has its own
+  replay button. Playback continues with the ringer on silent and the screen locked.
+- The app fetches audio itself, with the passphrase in the request's headers.
+- The `expo-audio` plugin is configured with no microphone permission: the app never records.
 
 ## Logging
 
@@ -119,6 +128,6 @@ Every `/api` route needs the passphrase as `Authorization: Bearer <passphrase>`;
    details)
 3. Generator (done, tested against a scripted model; its first real call waits on the API key)
 4. Reader and login (done; audio controls come with audio)
-5. Audio
+5. Audio (done; voices and the Azure call unverified until the first real call)
 6. Deploy to Fly.io. The setup (`server/Dockerfile`, `server/fly.toml`, `docs/deploy.md`) came
    early, so the server can be live while the rest is built.

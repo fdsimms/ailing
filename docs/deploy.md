@@ -56,6 +56,10 @@ fly secrets set \
 
 Setting secrets on an app that's already running restarts it.
 
+Optional, not secret: `AZURE_VOICE_A` and `AZURE_VOICE_B` change the two Thai voices (defaults
+`th-TH-NiwatNeural` and `th-TH-PremwadeeNeural`). Set them with `fly secrets set` too, or under
+`[env]` in `fly.toml`.
+
 ## 4. Deploy
 
 ```bash

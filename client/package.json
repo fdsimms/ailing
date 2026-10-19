@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "expo": "~57.0.16",
+    "expo-asset": "~57.0.14",
     "expo-audio": "~57.0.5",
     "expo-secure-store": "~57.0.1",
     "expo-status-bar": "~57.0.0",

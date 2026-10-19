@@ -7,6 +7,7 @@
     PATCH /api/topics/{id}            {favorite}
     POST  /api/topics/{id}/next       the next text for a topic, writing one if none is ready
     POST  /api/texts/{id}/reading     logs a session with a text and adjusts difficulty
+    GET   /api/texts/{id}/lines/{n}/audio   one line's MP3, made now if it isn't cached yet
 """
 
 import hmac
@@ -14,7 +15,9 @@ from collections.abc import Callable
 from typing import Annotated, Any, Literal
 
 import anthropic
+import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ailing import config, store
@@ -23,6 +26,7 @@ from ailing.generator import Ask, GenerationFailed, claude_ask
 from ailing.lexicon import Entry
 from ailing.reader import render
 from ailing.store import Reading, Topic
+from ailing.tts import AudioCache, azure_synthesize
 
 
 class NewTopic(BaseModel):
@@ -97,7 +101,21 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
             raise HTTPException(502, f"Couldn't write a text: {e}") from e
         background.add_task(engine.top_up)
         entries, lexicon = engine.snapshot()
-        return render(text, lexicon, {e.text: e.meaning for e in entries})
+        out = render(text, lexicon, {e.text: e.meaning for e in entries})
+        speaks = engine.audio is not None and engine.synthesize is not None
+        for i, line in enumerate(out["lines"]):
+            line["audio"] = speaks or engine.has_audio(text.id, i)
+        return out
+
+    @app.get("/api/texts/{text_id}/lines/{line}/audio", dependencies=authed)
+    async def line_audio(text_id: int, line: int) -> FileResponse:
+        text = store.get_text(engine.conn, text_id)
+        if text is None:
+            raise HTTPException(404, "No such text.")
+        path = await engine.line_audio(text, line)
+        if path is None:
+            raise HTTPException(404, "No audio for this line.")
+        return FileResponse(path, media_type="audio/mpeg")
 
     @app.post("/api/texts/{text_id}/reading", status_code=204, dependencies=authed)
     async def reading(text_id: int, body: ReadingIn, background: BackgroundTasks) -> Response:
@@ -139,7 +157,22 @@ def production_app() -> FastAPI:
         def ask_for(entries: list[Entry]) -> Ask:
             return claude_ask(client, entries)
 
+    synthesize = None
+    key, region = (
+        settings.secrets.get("AZURE_SPEECH_KEY"),
+        settings.secrets.get("AZURE_SPEECH_REGION"),
+    )
+    if key and region:
+        synthesize = azure_synthesize(key, region, httpx.AsyncClient())
+
     # The AnkiMCP client waits on the endpoint and credential (docs/anki-spike.md, "Still
     # needed"); until then the lexicon isn't refreshed.
-    engine = Engine(conn, ask_for, call_tool=None)
+    engine = Engine(
+        conn,
+        ask_for,
+        call_tool=None,
+        synthesize=synthesize,
+        audio=AudioCache(settings.audio_dir),
+        voices=settings.voices,
+    )
     return create_app(engine, settings.secrets.get("APP_PASSPHRASE"))
