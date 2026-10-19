@@ -19,7 +19,12 @@ brief disagree, this file is newer.
 - Built with EAS and installed through TestFlight.
 - Background audio is on (`UIBackgroundModes: audio`), so listening keeps going with the screen
   locked or in another app. That was the main thing a web app couldn't do well.
-- The server's address is plain build config. Nothing secret ships in the app.
+- The server's address is plain build config: `EXPO_PUBLIC_API_URL` in `client/eas.json`, inlined at
+  build time. It has to match the Fly app's name (`server/fly.toml`). Nothing secret ships in the app.
+- Three screens (login, topics, reader) switched by state in `App.tsx`, with no navigation library.
+  The reader shows the server's word split as tappable words: a tap shows the gloss, and marking a
+  word unknown is a second tap inside the gloss, so looking up a half-known word doesn't also flag it.
+- Leaving a text by any route logs the reading once, rated or not, which takes it off the ready queue.
 
 ## Hosting
 
@@ -113,7 +118,7 @@ Every `/api` route needs the passphrase as `Authorization: Bearer <passphrase>`;
 2. Lexicon snapshot (done, against a fake Anki; the MCP client itself waits on the connection
    details)
 3. Generator (done, tested against a scripted model; its first real call waits on the API key)
-4. Reader and login: the server API is done; the reader screen in the app is next
+4. Reader and login (done; audio controls come with audio)
 5. Audio
 6. Deploy to Fly.io. The setup (`server/Dockerfile`, `server/fly.toml`, `docs/deploy.md`) came
    early, so the server can be live while the rest is built.
