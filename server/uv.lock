@@ -13,6 +13,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "pythainlp" },
     { name = "uvicorn" },
 ]
 
@@ -27,6 +28,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "pythainlp", specifier = ">=5" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
@@ -629,6 +631,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pythainlp"
+version = "5.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9f/7f/7fa41bea1a9927eedf831f6ddcd71e104650c4881260984575fe4b84cc55/pythainlp-5.4.0.tar.gz", hash = "sha256:85cd4eed4a5a942c978d751be969a496581d7acc250fc9c8a2d54088cb6d19cd", size = 21481113, upload-time = "2026-10-09T00:59:27.424Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/13/3304199eec02b89573b6042078fd780e627d6637228dd6f69fad45f3262e/pythainlp-5.4.0-py3-none-any.whl", hash = "sha256:9239753df877202da1a50dd2842d9569eff764034f31f20222b3df4def5df193", size = 21936258, upload-time = "2026-10-09T00:59:24.506Z" },
+]
+
+[[package]]
 name = "ruff"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
@@ -685,6 +699,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a3/26/b09b8010994eccc3c09092e6b34058f36a460eea2d4c3e8b910c695975a0/typing_inspection-0.4.4.tar.gz", hash = "sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47", size = 76928, upload-time = "2026-08-12T12:37:25.997Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", hash = "sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147", size = 14750, upload-time = "2026-08-12T12:37:24.648Z" },
+]
+
+[[package]]
+name = "tzdata"
+version = "2026.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/68/f1b440335057bfce71b6e50a9d09445aa2ecbd08359a337976627b8409e7/tzdata-2026.5.tar.gz", hash = "sha256:8cc73c0a0bfca7dbfa59235d60b2eff82231dee33f53d206db1acd9173cfc0a7", size = 200404, upload-time = "2026-10-03T09:23:14.143Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/21/1e5995a1c920cce14e4bffae20c665ec10e7ed03ab25e006cd741092b718/tzdata-2026.5-py2.py3-none-any.whl", hash = "sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac", size = 347996, upload-time = "2026-10-03T09:23:12.535Z" },
 ]
 
 [[package]]
