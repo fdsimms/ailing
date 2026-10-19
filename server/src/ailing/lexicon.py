@@ -8,6 +8,7 @@ isn't in the Thai query (the Consonant Classes subdeck) is ignored.
 import html
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from ailing.coverage import Lexicon
@@ -30,6 +31,7 @@ class Entry:
     text: str
     meaning: str
     tier: Tier
+    due: bool = False  # a card of this note is due in Anki today
 
 
 async def fetch_snapshot(call: CallTool) -> list[Entry]:
@@ -41,8 +43,11 @@ async def fetch_snapshot(call: CallTool) -> list[Entry]:
 
 def build_entries(notes: list[dict[str, Any]], cards: list[dict[str, Any]]) -> list[Entry]:
     cards_by_note: dict[int, list[tuple[int, int]]] = {}
+    due_notes: set[int] = set()
     for card in cards:
         cards_by_note.setdefault(card["nid"], []).append((card["type"], card["ivl"]))
+        if card.get("dueToday"):
+            due_notes.add(card["nid"])
 
     entries = []
     for note in notes:
@@ -56,6 +61,7 @@ def build_entries(notes: list[dict[str, Any]], cards: list[dict[str, Any]]) -> l
                 text=text,
                 meaning=clean(fields.get("Meaning", {}).get("value", "")),
                 tier=note_tier(cards_by_note.get(note["noteId"], [])),
+                due=note["noteId"] in due_notes,
             )
         )
     return entries
@@ -63,7 +69,14 @@ def build_entries(notes: list[dict[str, Any]], cards: list[dict[str, Any]]) -> l
 
 def lexicon_from(entries: list[Entry]) -> Lexicon:
     """Mature and young both count as known for coverage; unreviewed notes don't."""
-    return Lexicon(e.text for e in entries if e.tier != "unreviewed")
+    return _lexicon(frozenset(e.text for e in entries if e.tier != "unreviewed"))
+
+
+@lru_cache(maxsize=4)
+def _lexicon(known: frozenset[str]) -> Lexicon:
+    # Building one costs about a second (the segmenter's dictionary), so the same set of known
+    # words reuses it: once per snapshot in production, once per test module in tests.
+    return Lexicon(known)
 
 
 def clean(value: str) -> str:

@@ -17,8 +17,16 @@ def note(note_id: int, entry: str, meaning: str) -> dict[str, Any]:
     }
 
 
-def card(nid: int, card_type: int, ivl: int) -> dict[str, Any]:
-    return {"cid": nid * 10, "nid": nid, "tags": [], "type": card_type, "queue": 2, "ivl": ivl}
+def card(nid: int, card_type: int, ivl: int, due: bool = False) -> dict[str, Any]:
+    return {
+        "cid": nid * 10,
+        "nid": nid,
+        "tags": [],
+        "type": card_type,
+        "queue": 2,
+        "ivl": ivl,
+        "dueToday": due,
+    }
 
 
 class FakeAnki:

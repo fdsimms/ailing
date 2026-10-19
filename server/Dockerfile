@@ -16,4 +16,4 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8080
-CMD ["uvicorn", "ailing.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "--factory", "ailing.app:production_app", "--host", "0.0.0.0", "--port", "8080"]
