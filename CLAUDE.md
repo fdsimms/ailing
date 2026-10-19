@@ -67,10 +67,11 @@ to Anki, languages other than Thai, offline mode, reimplementing FSRS, Drill and
   tools (`find_notes`, `notes_info`, `cards_stats`, `get_card_memory_state`, `rate_card`,
   `present_card`, `add_notes`) and record what they actually return.
 
-## Measurement (don't skip)
+## Logging
 
 Each text logs: date, language, mode, token count, verified coverage, stretch words, words glossed,
-words flagged unknown, rating, audio speed, listen-only or not, time spent. Each day, half of the
-eligible young words are randomly assigned to appear as stretch words and half are held back, so
-Anki's own outcomes can say whether it helped. Kill criterion: no difference after ~6 weeks means
-keep the mode for listening practice and stop claiming it helps vocabulary.
+words flagged unknown, rating, audio speed, listen-only or not, time spent. The rating drives the
+next text's difficulty, and the Milestone 1 exit check reads the log.
+
+The brief's randomized experiment (held-back words, kill criterion) was dropped by the owner. Don't
+build it. Decisions made since the brief are in `docs/architecture.md`; read it with the brief.
