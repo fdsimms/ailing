@@ -52,6 +52,12 @@ brief disagree, this file is newer.
   The reader's tap targets come from the server's split.
 - **Revise rather than regenerate.** A text under the 95% floor goes back to the model with the
   unknown words named ("replace ทอน, กลิ่น"). At most 3 attempts in total.
+- **Model:** `claude-opus-5-5` at `medium` effort, with server-side refusal fallbacks
+  (`fallbacks: "default"`). The reply is JSON held to a schema (`output_config.format`): a title,
+  lines (speaker, `|`-split text, English), and glosses for words off the list. Revisions are
+  appended to the same conversation, never edited, so the model's earlier thinking stays valid.
+  `server/src/ailing/generator.py`.
+- **A stretch word used fewer than 2 times** sends the text back too, even at full coverage.
 - **Prompt caching.** The lexicon is the same on every call that day, so it sits in a cached prefix.
 - **Glosses come with the text.** The model returns an English gloss for every word not in the
   lexicon in the same response, so tap-to-gloss never needs its own API call. Lexicon words use the
@@ -85,7 +91,7 @@ brief disagree, this file is newer.
 1. Coverage checker, with re-segmenting (done)
 2. Lexicon snapshot (done, against a fake Anki; the MCP client itself waits on the connection
    details)
-3. Generator
+3. Generator (done, tested against a scripted model; its first real call waits on the API key)
 4. Reader and login
 5. Audio
 6. Deploy to Fly.io. The setup (`server/Dockerfile`, `server/fly.toml`, `docs/deploy.md`) came
