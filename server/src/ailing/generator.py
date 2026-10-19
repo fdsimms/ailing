@@ -22,7 +22,7 @@ from anthropic.types.beta import BetaMessageParam, BetaOutputConfigParam, BetaTe
 from ailing.coverage import FLOOR, Coverage, Lexicon, check
 from ailing.lexicon import Entry
 
-MODEL = "claude-opus-5-5"
+MODEL = "claude-sonnet-5-5"
 EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
 MAX_TOKENS = 16000
 MAX_ATTEMPTS = 3
