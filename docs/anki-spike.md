@@ -86,13 +86,22 @@ needs none of them. `rate_card` is the Milestone 2 spike.
 
 ## Still needed
 
-To run the real spike from server code, I need:
+The client is written (`server/src/ailing/ankimcp.py`) and tested against a real MCP server over
+streamable HTTP. What's left is pointing it at the real tunnel:
 
-1. The AnkiMCP endpoint URL (the ankimcp.ai tunnel).
-2. Whatever credential it expects (token or header), supplied as an environment variable.
-3. Outbound network access from wherever the spike runs to that host.
+1. The AnkiMCP endpoint URL, as `ANKIMCP_URL`.
+2. Its credential as `ANKIMCP_TOKEN`, sent as `Authorization: Bearer <token>`. If ankimcp.ai
+   authenticates another way (another header, OAuth only), `ankimcp.py` is the one place to change.
+3. Network access from wherever it runs (the Fly app) to that host.
 
-None of these are present in this environment, so nothing here was mocked.
+Then run the spike, which calls the three tools once, read-only, and prints what came back:
+
+```bash
+ANKIMCP_URL=... ANKIMCP_TOKEN=... uv run python -m ailing.spike   # from server/, on any machine
+fly ssh console -C "python -m ailing.spike"                         # on Fly, once the secrets are set
+```
+
+Record what it prints here, under a dated heading.
 
 ## Decisions made after the spike
 
