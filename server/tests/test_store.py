@@ -80,3 +80,13 @@ def test_the_default_timeout_is_45_seconds() -> None:
     from ailing.gateway import TIMEOUT_SECONDS
 
     assert TIMEOUT_SECONDS == 45
+
+
+def test_a_reply_of_the_wrong_shape_keeps_the_old_snapshot(conn) -> None:  # type: ignore[no-untyped-def]
+    save_snapshot(conn, OLD, NOW - timedelta(days=1))
+
+    async def odd(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {"unexpected": True}
+
+    assert not asyncio.run(refresh_if_stale(conn, odd, NOW))
+    assert load_snapshot(conn)[0] == OLD

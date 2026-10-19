@@ -2,10 +2,11 @@
 (docs/architecture.md, Hosting); /health doesn't, so Fly can check the machine.
 
     GET   /api/check                  204 if the passphrase is right
-    GET   /api/topics                 topics with how many texts are ready; tops up in the background
+    GET   /api/topics                 topics with their state and ready count; tops up in the background
     POST  /api/topics                 {name, favorite?} adds a topic (or returns the existing one)
     PATCH /api/topics/{id}            {favorite}
-    POST  /api/topics/{id}/next       the next text for a topic, writing one if none is ready
+    POST  /api/topics/{id}/next       the next text for a topic; 202 {"writing": true} while one is
+                                      being written in the background, so ask again shortly
     POST  /api/texts/{id}/reading     logs a session with a text and adjusts difficulty
     GET   /api/texts/{id}/lines/{n}/audio   one line's MP3, made now if it isn't cached yet
 """
@@ -17,13 +18,13 @@ from typing import Annotated, Any, Literal
 import anthropic
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from ailing import config, store
 from ailing.ankimcp import ankimcp_call_tool
-from ailing.engine import Engine, NotAvailable
-from ailing.generator import Ask, GenerationFailed, claude_ask
+from ailing.engine import Engine, NotAvailable, NotFound
+from ailing.generator import Ask, claude_ask
 from ailing.lexicon import Entry
 from ailing.reader import render
 from ailing.store import Reading, Topic
@@ -56,7 +57,9 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         if not passphrase:
             raise HTTPException(503, "The server has no passphrase set.")
         given = (authorization or "").removeprefix("Bearer ").strip()
-        if not hmac.compare_digest(given.encode(), passphrase.encode()):
+        # Header values arrive decoded as latin-1, so turn them back into the bytes that were sent
+        # before comparing with the passphrase's UTF-8 bytes; otherwise "pässword" never matches.
+        if not hmac.compare_digest(given.encode("latin-1"), passphrase.encode()):
             raise HTTPException(401, "Wrong passphrase.")
 
     authed = [Depends(require_passphrase)]
@@ -72,7 +75,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
     @app.get("/api/topics", dependencies=authed)
     async def topics(background: BackgroundTasks) -> list[dict[str, Any]]:
         background.add_task(engine.top_up)
-        return [_topic(t) for t in store.list_topics(engine.conn)]
+        return [_topic(t, engine) for t in store.list_topics(engine.conn)]
 
     @app.post("/api/topics", dependencies=authed)
     async def add_topic(body: NewTopic, background: BackgroundTasks) -> dict[str, Any]:
@@ -81,25 +84,25 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         background.add_task(engine.top_up)
-        return _topic(topic)
+        return _topic(topic, engine)
 
     @app.patch("/api/topics/{topic_id}", dependencies=authed)
     async def update_topic(topic_id: int, body: TopicUpdate) -> dict[str, Any]:
         topic = store.set_favorite(engine.conn, topic_id, body.favorite)
         if topic is None:
             raise HTTPException(404, "No such topic.")
-        return _topic(topic)
+        return _topic(topic, engine)
 
     @app.post("/api/topics/{topic_id}/next", dependencies=authed)
-    async def next_text(topic_id: int, background: BackgroundTasks) -> dict[str, Any]:
+    async def next_text(topic_id: int, background: BackgroundTasks) -> Any:
         try:
             text = await engine.next_text(topic_id)
-        except KeyError as e:
+        except NotFound as e:
             raise HTTPException(404, "No such topic.") from e
         except NotAvailable as e:
             raise HTTPException(503, str(e)) from e
-        except GenerationFailed as e:
-            raise HTTPException(502, f"Couldn't write a text: {e}") from e
+        if text is None:
+            return JSONResponse({"writing": True}, status_code=202)
         background.add_task(engine.top_up)
         entries, lexicon = engine.snapshot()
         out = render(text, lexicon, {e.text: e.meaning for e in entries})
@@ -133,7 +136,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
                     seconds=body.seconds,
                 ),
             )
-        except KeyError as e:
+        except NotFound as e:
             raise HTTPException(404, "No such text.") from e
         background.add_task(engine.top_up)
         return Response(status_code=204)
@@ -141,8 +144,14 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
     return app
 
 
-def _topic(t: Topic) -> dict[str, Any]:
-    return {"id": t.id, "name": t.name, "favorite": t.favorite, "ready": t.ready}
+def _topic(t: Topic, engine: Engine) -> dict[str, Any]:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "favorite": t.favorite,
+        "ready": t.ready,
+        "state": engine.topic_state(t),
+    }
 
 
 def production_app() -> FastAPI:

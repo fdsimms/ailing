@@ -1,0 +1,13 @@
+# Continuous backup of the database to Fly's object storage (Tigris), read by start.sh.
+# Keys checked against Litestream v0.5.17's config parser (cmd/litestream/main.go). ${...} is expanded
+# from the environment: BUCKET_NAME, AWS_ENDPOINT_URL_S3 and AWS_REGION come from
+# `fly storage create`, as do AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, which Litestream reads
+# directly.
+dbs:
+  - path: ${AILING_DB_PATH}
+    replica:
+      type: s3
+      bucket: ${BUCKET_NAME}
+      path: ailing
+      endpoint: ${AWS_ENDPOINT_URL_S3}
+      region: ${AWS_REGION}

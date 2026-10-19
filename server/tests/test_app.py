@@ -1,6 +1,9 @@
 import random
+import time
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +17,24 @@ NOW = datetime(2026, 10, 19, 9, 0)
 AUTH = {"Authorization": "Bearer open sesame"}
 
 
+_open: list[TestClient] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_clients() -> Iterator[None]:
+    yield
+    while _open:
+        _open.pop().__exit__(None, None, None)
+
+
+def started(app: Any) -> TestClient:
+    # Entered, so the event loop (and the background writes started on it) outlives each request.
+    c = TestClient(app)
+    c.__enter__()
+    _open.append(c)
+    return c
+
+
 def client(
     model: ScriptedModel | None = None, passphrase: str | None = "open sesame"
 ) -> TestClient:
@@ -21,7 +42,17 @@ def client(
     store.save_snapshot(conn, ENTRIES, NOW)
     model = model or ScriptedModel(GOOD)
     engine = Engine(conn, model.ask_for, None, lambda: NOW, random.Random(1))
-    return TestClient(create_app(engine, passphrase))
+    return started(create_app(engine, passphrase))
+
+
+def next_text(c: TestClient, topic_id: int) -> Any:
+    """What the app does: ask, and while the answer is 202, ask again shortly."""
+    deadline = time.time() + 10
+    while True:
+        response = c.post(f"/api/topics/{topic_id}/next", headers=AUTH)
+        if response.status_code != 202 or time.time() > deadline:
+            return response
+        time.sleep(0.02)
 
 
 def test_health_needs_no_passphrase() -> None:
@@ -77,7 +108,7 @@ def test_next_text_returns_the_server_split_lines() -> None:
     c = client()
     topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
 
-    text = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH).json()
+    text = next_text(c, topic["id"]).json()
 
     assert text["title"] == "At the stall"
     first_line = text["lines"][0]
@@ -89,9 +120,10 @@ def test_next_text_returns_the_server_split_lines() -> None:
 def test_next_text_explains_a_failed_generation() -> None:
     c = client(ScriptedModel(BAD))
     topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
-    response = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH)
+    response = next_text(c, topic["id"])
     assert response.status_code == 503
     assert "Couldn't write a text" in response.json()["detail"]
+    assert c.get("/api/topics", headers=AUTH).json()[0]["state"] == "failed"
 
 
 def test_next_text_for_a_missing_topic_is_404() -> None:
@@ -101,7 +133,7 @@ def test_next_text_for_a_missing_topic_is_404() -> None:
 def test_logging_a_reading() -> None:
     c = client()
     topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
-    text = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH).json()
+    text = next_text(c, topic["id"]).json()
 
     response = c.post(
         f"/api/texts/{text['id']}/reading",
@@ -141,20 +173,20 @@ def speaking_client(tmp_path: Path) -> TestClient:
         synthesize=voice,
         audio=AudioCache(tmp_path),
     )
-    return TestClient(create_app(engine, "open sesame"))
+    return started(create_app(engine, "open sesame"))
 
 
 def test_lines_say_whether_they_have_audio() -> None:
     c = client()  # no text to speech set up
     topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
-    text = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH).json()
+    text = next_text(c, topic["id"]).json()
     assert [line["audio"] for line in text["lines"]] == [False, False]
 
 
 def test_a_lines_audio_is_served_as_mp3(tmp_path: Path) -> None:
     c = speaking_client(tmp_path)
     topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
-    text = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH).json()
+    text = next_text(c, topic["id"]).json()
     assert all(line["audio"] for line in text["lines"])
 
     response = c.get(f"/api/texts/{text['id']}/lines/0/audio", headers=AUTH)
@@ -165,3 +197,43 @@ def test_a_lines_audio_is_served_as_mp3(tmp_path: Path) -> None:
     assert c.get(f"/api/texts/{text['id']}/lines/0/audio").status_code == 401
     assert c.get(f"/api/texts/{text['id']}/lines/9/audio", headers=AUTH).status_code == 404
     assert c.get("/api/texts/999/lines/0/audio", headers=AUTH).status_code == 404
+
+
+def test_a_topic_with_nothing_ready_answers_202_then_the_text() -> None:
+    c = client()
+    topic = c.post("/api/topics", json={"name": "Taxi", "favorite": False}, headers=AUTH).json()
+    assert topic["state"] == "idle"
+
+    first = c.post(f"/api/topics/{topic['id']}/next", headers=AUTH)
+    assert first.status_code == 202
+    assert first.json() == {"writing": True}
+
+    text = next_text(c, topic["id"])
+    assert text.status_code == 200
+    assert text.json()["title"] == "At the stall"
+
+
+def test_topics_report_their_state() -> None:
+    c = client()
+    c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH)
+    c.post("/api/topics", json={"name": "Taxi", "favorite": False}, headers=AUTH)
+    states = {t["name"]: t["state"] for t in c.get("/api/topics", headers=AUTH).json()}
+    assert states == {"Food stall": "ready", "Taxi": "idle"}
+
+
+def test_a_passphrase_with_non_ascii_characters_works() -> None:
+    conn = store.connect(":memory:")
+    engine = Engine(conn, None, None, lambda: NOW)
+    c = started(create_app(engine, "pässword"))
+    utf8 = "Bearer pässword".encode()  # the bytes a phone sends
+    assert c.get("/api/check", headers={b"Authorization": utf8}).status_code == 204
+    assert c.get("/api/check", headers={"Authorization": "Bearer password"}).status_code == 401
+
+
+def test_a_repeated_reading_is_accepted_but_counted_once() -> None:
+    c = client()
+    topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
+    text = next_text(c, topic["id"]).json()
+    body = {"rating": "too_hard", "finished": True}
+    assert c.post(f"/api/texts/{text['id']}/reading", json=body, headers=AUTH).status_code == 204
+    assert c.post(f"/api/texts/{text['id']}/reading", json=body, headers=AUTH).status_code == 204

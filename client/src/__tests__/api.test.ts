@@ -56,3 +56,22 @@ test("a non-JSON error and a network failure still read plainly", async () => {
     "Couldn't reach the server. Check your connection and try again.",
   );
 });
+
+test("a text still being written comes back as null", async () => {
+  const { impl } = fakeFetch(json({ writing: true }, 202));
+  await expect(createApi("https://x", "p", impl).nextText(1)).resolves.toBeNull();
+});
+
+test("a rejected passphrase tells the app, so it can ask again", async () => {
+  const { impl } = fakeFetch(json({ detail: "Wrong passphrase." }, 401));
+  const onUnauthorized = jest.fn();
+  await createApi("https://x", "p", impl, onUnauthorized).topics().catch(() => {});
+  expect(onUnauthorized).toHaveBeenCalledTimes(1);
+});
+
+test("other errors don't log the app out", async () => {
+  const { impl } = fakeFetch(json({ detail: "The server has no Claude API key yet." }, 503));
+  const onUnauthorized = jest.fn();
+  await createApi("https://x", "p", impl, onUnauthorized).nextText(1).catch(() => {});
+  expect(onUnauthorized).not.toHaveBeenCalled();
+});

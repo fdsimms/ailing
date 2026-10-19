@@ -60,7 +60,23 @@ Optional, not secret: `AZURE_VOICE_A` and `AZURE_VOICE_B` change the two Thai vo
 `th-TH-NiwatNeural` and `th-TH-PremwadeeNeural`). Set them with `fly secrets set` too, or under
 `[env]` in `fly.toml`.
 
-## 4. Deploy
+## 4. Turn on backups
+
+The reading log is what the Milestone 1 check reads, and Fly's own volume snapshots only last
+about 5 days. Litestream streams every change to the database to Fly's object storage (Tigris)
+and restores it by itself onto a new, empty volume.
+
+```bash
+fly storage create
+```
+
+Accept the defaults. It creates a bucket and sets its secrets on the app (`BUCKET_NAME`,
+`AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`; that list is
+from memory, so check `fly secrets list` shows `BUCKET_NAME` afterwards). The server turns backups
+on whenever `BUCKET_NAME` is set (`server/start.sh`), so there's nothing else to configure. Skipping
+this step leaves the server running without backups.
+
+## 5. Deploy
 
 ```bash
 fly deploy
@@ -79,7 +95,7 @@ It calls `find_notes`, `notes_info` and `cards_stats` once, read-only, and print
 and cards. "AnkiMCP didn't answer" with a reason means the URL, the token or the tunnel needs a
 look before going further.
 
-## 5. Redeploy after a change
+## 6. Redeploy after a change
 
 Run `fly deploy` from `server/` again. The database and audio cache are on the volume, so they
 survive a redeploy.
