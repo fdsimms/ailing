@@ -73,6 +73,10 @@ Other shape notes:
 - A note lists its card ids in `cards`. The first note had three cards, and one id (1778429153678) is
   far from the other two, so it was probably added later (the audio card).
 - Field values may contain HTML. Strip it before use.
+- Checked on 19 October 2026: no Thai `Entry` contains a space, slash, comma, semicolon, bracket, HTML
+  tag or `&nbsp;`, so each entry is one word or phrase. `Meaning` does use `;` between senses. The
+  snapshot still strips HTML from both, in case that changes.
+- Some notes are tagged `receptive-only`.
 - Pass `include_fields` to cut the response size. Without it, 28 fields come back per note.
 
 ## Not yet called
