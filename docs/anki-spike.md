@@ -43,8 +43,9 @@ Called with `deck: "👅 Languages::🐘 ภาษาไทย"`. Subdecks are i
 - There is **no deck name and no entry text** on a card record. Join to notes through `nid`.
 - Several cards share one `nid` (one note produces forward, reverse and audio cards). The lexicon needs
   a rule for the tier: the brief says "weight toward mature cards (interval of 21 days or more)", so
-  take the **minimum** interval across a note's reviewed cards for "known", or the maximum for "mature".
-  This is a design decision to confirm, not something the API settles.
+  the **minimum** interval across a note's reviewed cards decides the tier (a note is only as known as
+  its weakest card). Decided on 19 October 2026 and implemented in `server/src/ailing/tiers.py`:
+  mature is 21 days or more, young is reviewed but below that, unreviewed has no reviewed card.
 - Paginated (limit 1000 max, ordered by card id).
 
 ## `notes_info`
@@ -88,3 +89,8 @@ To run the real spike from server code, I need:
 3. Outbound network access from wherever the spike runs to that host.
 
 None of these are present in this environment, so nothing here was mocked.
+
+## Decisions made after the spike
+
+- **Hosting:** the app server goes on Fly.io, as its own app with a volume for SQLite, separate from
+  the dundundun MCP app. Never on the Anki droplet.
