@@ -237,3 +237,15 @@ def test_a_repeated_reading_is_accepted_but_counted_once() -> None:
     body = {"rating": "too_hard", "finished": True}
     assert c.post(f"/api/texts/{text['id']}/reading", json=body, headers=AUTH).status_code == 204
     assert c.post(f"/api/texts/{text['id']}/reading", json=body, headers=AUTH).status_code == 204
+
+
+def test_the_stretch_setting_can_be_read_and_changed() -> None:
+    c = client()
+    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "topic"}
+    changed = c.patch("/api/settings", headers=AUTH, json={"stretch_words": "any"})
+    assert changed.json() == {"stretch_words": "any"}
+    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "any"}
+    assert (
+        c.patch("/api/settings", headers=AUTH, json={"stretch_words": "loose"}).status_code == 422
+    )
+    assert c.get("/api/settings").status_code == 401

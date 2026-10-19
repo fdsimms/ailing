@@ -1,6 +1,14 @@
 // The handful of shared pieces the three screens are built from.
 import type { ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  type StyleProp,
+  StyleSheet,
+  Text,
+  View,
+  type ViewStyle,
+} from "react-native";
 
 import { font, radius, spacing, useColors } from "../theme";
 
@@ -32,6 +40,39 @@ export function Card({ children }: { children: ReactNode }) {
 export function Hint({ children }: { children: string }) {
   const c = useColors();
   return <Text style={[styles.hint, { color: c.textTertiary }]}>{children}</Text>;
+}
+
+// A row of equal segments, one of them chosen: the reader's speed, the stretch words setting.
+export function Segments<T extends string | number>({
+  options,
+  value,
+  onChange,
+  style,
+}: {
+  options: { value: T; label: string; accessibilityLabel?: string }[];
+  value: T;
+  onChange: (value: T) => void;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const c = useColors();
+  return (
+    <View style={[styles.segments, { backgroundColor: c.tertiary }, style]} accessibilityRole="radiogroup">
+      {options.map((o) => (
+        <Pressable
+          key={o.value}
+          onPress={() => onChange(o.value)}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: o.value === value }}
+          accessibilityLabel={o.accessibilityLabel ?? o.label}
+          style={[styles.segment, o.value === value && { backgroundColor: c.card }]}
+        >
+          <Text style={[styles.segmentText, { color: o.value === value ? c.text : c.textSecondary }]}>
+            {o.label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
 export function PrimaryButton({
@@ -109,6 +150,9 @@ export function ErrorNote({ message, onRetry }: { message: string; onRetry?: () 
 }
 
 const styles = StyleSheet.create({
+  segments: { flexDirection: "row", borderRadius: 9, padding: 2 },
+  segment: { flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 7 },
+  segmentText: { fontSize: font.sm, fontWeight: "600" },
   nav: { minHeight: 44, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md },
   navSide: { width: 96 },
   back: { fontSize: font.lg },

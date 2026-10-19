@@ -25,6 +25,12 @@ export type ReaderText = {
   lines: TextLine[];
 };
 
+// "topic": the model picks stretch words that suit the topic from a list of due and newer words.
+// "any": it's given words from that list at random and has to fit them in.
+export type StretchWords = "topic" | "any";
+
+export type Settings = { stretch_words: StretchWords };
+
 export type Rating = "too_easy" | "about_right" | "too_hard";
 
 export type ReadingLog = {
@@ -85,6 +91,8 @@ export function createApi(
     addTopic: (name: string) => call<Topic>("POST", "/api/topics", { name, favorite: true }),
     setFavorite: (id: number, favorite: boolean) =>
       call<Topic>("PATCH", `/api/topics/${id}`, { favorite }),
+    settings: () => call<Settings>("GET", "/api/settings"),
+    updateSettings: (settings: Partial<Settings>) => call<Settings>("PATCH", "/api/settings", settings),
     // null while the server is still writing the text (202): ask again in a few seconds.
     nextText: async (topicId: number) =>
       (await call<ReaderText | undefined>("POST", `/api/topics/${topicId}/next`)) ?? null,

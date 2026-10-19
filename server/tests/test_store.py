@@ -7,7 +7,16 @@ from fake_anki import FakeAnki, card, note
 
 from ailing.gateway import AnkiUnavailable, with_timeout
 from ailing.lexicon import Entry
-from ailing.store import connect, is_stale, load_snapshot, refresh_if_stale, save_snapshot
+from ailing.store import (
+    Settings,
+    connect,
+    is_stale,
+    load_settings,
+    load_snapshot,
+    refresh_if_stale,
+    save_settings,
+    save_snapshot,
+)
 
 NOW = datetime(2026, 10, 19, 9, 0)
 OLD = [Entry(1, "ฉัน", "I; me", "mature")]
@@ -90,3 +99,14 @@ def test_a_reply_of_the_wrong_shape_keeps_the_old_snapshot(conn) -> None:  # typ
 
     assert not asyncio.run(refresh_if_stale(conn, odd, NOW))
     assert load_snapshot(conn)[0] == OLD
+
+
+def test_settings_default_to_choosing_stretch_words_and_round_trip(conn) -> None:  # type: ignore[no-untyped-def]
+    assert load_settings(conn) == Settings(stretch_words="topic")
+    save_settings(conn, Settings(stretch_words="any"))
+    assert load_settings(conn).stretch_words == "any"
+
+
+def test_a_setting_that_no_longer_exists_is_ignored(conn) -> None:  # type: ignore[no-untyped-def]
+    conn.execute("INSERT INTO meta (key, value) VALUES ('settings', '{\"retired\": 1}')")
+    assert load_settings(conn) == Settings()

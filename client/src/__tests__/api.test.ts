@@ -75,3 +75,12 @@ test("other errors don't log the app out", async () => {
   await createApi("https://x", "p", impl, onUnauthorized).nextText(1).catch(() => {});
   expect(onUnauthorized).not.toHaveBeenCalled();
 });
+
+test("changing a setting sends only that field", async () => {
+  const { impl, calls } = fakeFetch(json({ stretch_words: "any" }));
+  const settings = await createApi("https://x", "p", impl).updateSettings({ stretch_words: "any" });
+  expect(settings.stretch_words).toBe("any");
+  expect(calls[0].url).toBe("https://x/api/settings");
+  expect(calls[0].init.method).toBe("PATCH");
+  expect(JSON.parse(calls[0].init.body as string)).toEqual({ stretch_words: "any" });
+});

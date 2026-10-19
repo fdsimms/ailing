@@ -7,6 +7,8 @@
     PATCH /api/topics/{id}            {favorite}
     POST  /api/topics/{id}/next       the next text for a topic; 202 {"writing": true} while one is
                                       being written in the background, so ask again shortly
+    GET   /api/settings               {stretch_words: "topic" | "any"}
+    PATCH /api/settings               the same fields; takes effect from the next text written
     POST  /api/texts/{id}/reading     logs a session with a text and adjusts difficulty
     GET   /api/texts/{id}/lines/{n}/audio   one line's MP3, made now if it isn't cached yet
 """
@@ -27,7 +29,7 @@ from ailing.engine import Engine, NotAvailable, NotFound
 from ailing.generator import Ask, claude_ask
 from ailing.lexicon import Entry
 from ailing.reader import render
-from ailing.store import Reading, Topic
+from ailing.store import Reading, Settings, StretchWords, Topic
 from ailing.tts import AudioCache, azure_synthesize
 
 
@@ -38,6 +40,10 @@ class NewTopic(BaseModel):
 
 class TopicUpdate(BaseModel):
     favorite: bool
+
+
+class SettingsUpdate(BaseModel):
+    stretch_words: StretchWords | None = None
 
 
 class ReadingIn(BaseModel):
@@ -120,6 +126,17 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         if path is None:
             raise HTTPException(404, "No audio for this line.")
         return FileResponse(path, media_type="audio/mpeg")
+
+    @app.get("/api/settings", dependencies=authed)
+    async def settings() -> dict[str, Any]:
+        return store.load_settings(engine.conn).__dict__
+
+    @app.patch("/api/settings", dependencies=authed)
+    async def update_settings(body: SettingsUpdate) -> dict[str, Any]:
+        current = store.load_settings(engine.conn)
+        updated = Settings(stretch_words=body.stretch_words or current.stretch_words)
+        store.save_settings(engine.conn, updated)
+        return updated.__dict__
 
     @app.post("/api/texts/{text_id}/reading", status_code=204, dependencies=authed)
     async def reading(text_id: int, body: ReadingIn, background: BackgroundTasks) -> Response:

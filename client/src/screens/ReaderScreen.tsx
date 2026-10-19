@@ -2,7 +2,7 @@
 // rating at the end.
 //
 // ==== Layout ====
-// NavBar, title, practice words, the Show English switch, the lines (each with its own replay
+// NavBar, title, practice words, the Show English and highlight switches, the lines (each with its own replay
 // button), then a Done button, with the player bar pinned under the scroll view. "Done" swaps the
 // lines for the end view (rating, stats, words marked unknown). The gloss popover is a transparent
 // Modal, so a tap's page coordinates place it directly.
@@ -34,7 +34,18 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { type Api, ApiError, type Rating, type ReaderText, type Topic, type Word } from "../api";
-import { Card, ErrorNote, Hint, NavBar, PillButton, PrimaryButton, SectionLabel, TextButton } from "../components/ui";
+import {
+  Card,
+  ErrorNote,
+  Hint,
+  NavBar,
+  PillButton,
+  PrimaryButton,
+  SectionLabel,
+  Segments,
+  TextButton,
+} from "../components/ui";
+import { countOutsideDeck, isOutsideDeck } from "../deckWords";
 import { firstLine, nextLine } from "../playback";
 import { RATES } from "../playbackRate";
 import { formatDuration, heard, isFlagged, lookUp, type Session, startSession, toLog, toggleFlag } from "../session";
@@ -42,8 +53,10 @@ import { font, radius, spacing, thaiFont, useColors } from "../theme";
 
 type Tapped = { word: Word; x: number; y: number };
 
-// The speed chosen last, kept for the rest of the app's run.
+// The speed chosen last, and whether words outside the deck are highlighted, kept for the rest of
+// the app's run.
 let lastRate = 0.9;
+let lastHighlight = false;
 
 const POLL_MS = 3_000;
 // Three attempts and the audio rarely take more than two minutes; past this, something is wrong.
@@ -57,6 +70,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [english, setEnglish] = useState(false);
+  const [highlight, setHighlight] = useState(lastHighlight);
   const [tapped, setTapped] = useState<Tapped | null>(null);
   const [ended, setEnded] = useState(false);
   const [rating, setRating] = useState<Rating | null>(null);
@@ -237,6 +251,23 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
               accessibilityLabel="Show English"
             />
           </View>
+          <View style={[styles.toggle, styles.toggleNext]}>
+            <Text style={[styles.toggleText, { color: c.textSecondary }]}>Highlight words not in your deck</Text>
+            <Switch
+              value={highlight}
+              onValueChange={(on) => {
+                lastHighlight = on;
+                setHighlight(on);
+              }}
+              trackColor={{ true: c.accent }}
+              accessibilityLabel="Highlight words not in your deck"
+            />
+          </View>
+          {highlight && countOutsideDeck(text) === 0 ? (
+            <Text style={[styles.toggleNote, { color: c.textTertiary }]}>
+              Every word in this text is in your deck.
+            </Text>
+          ) : null}
           {text.lines.map((line, i) => (
             <View
               key={i}
@@ -263,6 +294,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
                       key={j}
                       word={word}
                       flagged={isFlagged(session, word.text)}
+                      highlighted={highlight && isOutsideDeck(word)}
                       selected={tapped?.word === word}
                       onPress={tap}
                     />
@@ -389,11 +421,13 @@ function glossFor(text: ReaderText, word: string): string | null {
 function WordView({
   word,
   flagged,
+  highlighted,
   selected,
   onPress,
 }: {
   word: Word;
   flagged: boolean;
+  highlighted: boolean;
   selected: boolean;
   onPress: (word: Word, x: number, y: number) => void;
 }) {
@@ -410,12 +444,18 @@ function WordView({
     <Pressable
       onPress={(e) => onPress(word, e.nativeEvent.pageX, e.nativeEvent.pageY)}
       accessibilityRole="button"
-      accessibilityLabel={[word.text, word.stretch && "practice word", flagged && "marked unknown"]
+      accessibilityLabel={[
+        word.text,
+        word.stretch && "practice word",
+        highlighted && "not in your deck",
+        flagged && "marked unknown",
+      ]
         .filter(Boolean)
         .join(", ")}
       accessibilityHint="Shows what this word means"
       style={[
         styles.word,
+        highlighted && { backgroundColor: c.outsideDeck },
         selected && { backgroundColor: c.accentSubtle, borderColor: c.accent },
       ]}
     >
@@ -535,22 +575,11 @@ function PlayerBar({
           <Text style={[styles.playerHint, { color: c.textSecondary }]}>Tap a line's ▶︎ to replay it</Text>
         </View>
       </View>
-      <View style={[styles.segments, { backgroundColor: c.tertiary }]} accessibilityRole="radiogroup">
-        {RATES.map((r) => (
-          <Pressable
-            key={r}
-            onPress={() => onRate(r)}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: r === rate }}
-            accessibilityLabel={`Speed ${r}`}
-            style={[styles.segment, r === rate && { backgroundColor: c.card }]}
-          >
-            <Text style={[styles.segmentText, { color: r === rate ? c.text : c.textSecondary }]}>
-              {r.toFixed(1)}×
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <Segments
+        options={RATES.map((r) => ({ value: r, label: `${r.toFixed(1)}×`, accessibilityLabel: `Speed ${r}` }))}
+        value={rate}
+        onChange={onRate}
+      />
     </View>
   );
 }
@@ -596,7 +625,9 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
   },
-  toggleText: { fontSize: font.md },
+  toggleText: { fontSize: font.md, flexShrink: 1 },
+  toggleNext: { paddingTop: 0 },
+  toggleNote: { fontSize: font.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
   line: {
     flexDirection: "row",
     gap: 10,
@@ -670,9 +701,6 @@ const styles = StyleSheet.create({
   playerText: { flex: 1 },
   playerTitle: { fontSize: font.md, fontWeight: "600" },
   playerHint: { fontSize: font.sm, marginTop: 2 },
-  segments: { flexDirection: "row", borderRadius: 9, padding: 2 },
-  segment: { flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 7 },
-  segmentText: { fontSize: font.sm, fontWeight: "600" },
   popover: {
     position: "absolute",
     width: POPOVER_WIDTH,
