@@ -124,8 +124,8 @@ Every `/api` route needs the passphrase as `Authorization: Bearer <passphrase>`;
 ## Build order
 
 1. Coverage checker, with re-segmenting (done)
-2. Lexicon snapshot (done, against a fake Anki; the MCP client itself waits on the connection
-   details)
+2. Lexicon snapshot (done; the MCP client is tested against a local MCP server, and the real
+   tunnel waits on its URL and credential, see `docs/anki-spike.md`)
 3. Generator (done, tested against a scripted model; its first real call waits on the API key)
 4. Reader and login (done; audio controls come with audio)
 5. Audio (done; voices and the Azure call unverified until the first real call)

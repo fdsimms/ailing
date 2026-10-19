@@ -69,6 +69,16 @@ fly deploy
 Then open `https://ailing.fly.dev/health` (with your app name) in a browser. It should say
 `{"status":"ok"}`.
 
+Then check the server can reach Anki, which is the first thing everything else needs:
+
+```bash
+fly ssh console -C "python -m ailing.spike"
+```
+
+It calls `find_notes`, `notes_info` and `cards_stats` once, read-only, and prints a few Thai notes
+and cards. "AnkiMCP didn't answer" with a reason means the URL, the token or the tunnel needs a
+look before going further.
+
 ## 5. Redeploy after a change
 
 Run `fly deploy` from `server/` again. The database and audio cache are on the volume, so they

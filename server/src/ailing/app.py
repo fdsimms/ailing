@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ailing import config, store
+from ailing.ankimcp import ankimcp_call_tool
 from ailing.engine import Engine, NotAvailable
 from ailing.generator import Ask, GenerationFailed, claude_ask
 from ailing.lexicon import Entry
@@ -165,12 +166,15 @@ def production_app() -> FastAPI:
     if key and region:
         synthesize = azure_synthesize(key, region, httpx.AsyncClient())
 
-    # The AnkiMCP client waits on the endpoint and credential (docs/anki-spike.md, "Still
-    # needed"); until then the lexicon isn't refreshed.
+    # Without ANKIMCP_URL the lexicon is never refreshed, and the server says it has no word list.
+    anki_url = settings.secrets.get("ANKIMCP_URL")
+    call_tool = (
+        ankimcp_call_tool(anki_url, settings.secrets.get("ANKIMCP_TOKEN")) if anki_url else None
+    )
     engine = Engine(
         conn,
         ask_for,
-        call_tool=None,
+        call_tool=call_tool,
         synthesize=synthesize,
         audio=AudioCache(settings.audio_dir),
         voices=settings.voices,
