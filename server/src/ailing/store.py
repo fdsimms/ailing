@@ -111,6 +111,9 @@ def connect(path: Path | str) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA)
+    with conn:
+        # A text left pending by a restart mid-audio: its missing lines are made on request.
+        conn.execute("UPDATE texts SET status = 'ready' WHERE status = 'pending'")
     return conn
 
 
@@ -207,17 +210,21 @@ def save_text(
     stretch: list[str],
     floor: float,
     now: datetime,
+    status: str = "ready",
 ) -> int:
+    """Stores a generated text. `status` is "pending" while its audio is made, "ready" once it can
+    be served, or "dropped" for a text that missed the floor (kept only for its cost)."""
     u = generated.usage
     with conn:
         cur = conn.execute(
-            """INSERT INTO texts (topic_id, created_at, title, lines, glosses, stretch, coverage,
-                   token_count, floor, attempts, model, input_tokens, output_tokens,
+            """INSERT INTO texts (topic_id, created_at, status, title, lines, glosses, stretch,
+                   coverage, token_count, floor, attempts, model, input_tokens, output_tokens,
                    cache_read_tokens, cache_write_tokens, cost_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 topic_id,
                 now.isoformat(),
+                status,
                 generated.title,
                 json.dumps([ln.__dict__ for ln in generated.lines], ensure_ascii=False),
                 json.dumps(generated.glosses, ensure_ascii=False),
@@ -226,7 +233,7 @@ def save_text(
                 generated.coverage.counted,
                 floor,
                 generated.attempts,
-                MODEL,
+                u.model or MODEL,
                 u.input_tokens,
                 u.output_tokens,
                 u.cache_read_tokens,
@@ -236,6 +243,16 @@ def save_text(
         )
     assert cur.lastrowid is not None
     return cur.lastrowid
+
+
+def mark_ready(conn: sqlite3.Connection, text_id: int) -> None:
+    with conn:
+        conn.execute("UPDATE texts SET status = 'ready' WHERE id = ?", (text_id,))
+
+
+def text_status(conn: sqlite3.Connection, text_id: int) -> str | None:
+    row = conn.execute("SELECT status FROM texts WHERE id = ?", (text_id,)).fetchone()
+    return row[0] if row else None
 
 
 def next_ready_text(conn: sqlite3.Connection, topic_id: int) -> StoredText | None:

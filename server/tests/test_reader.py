@@ -1,7 +1,7 @@
 from scripted import ENTRIES
 
 from ailing.generator import Line
-from ailing.lexicon import lexicon_from
+from ailing.lexicon import Entry, lexicon_from
 from ailing.reader import render
 from ailing.store import StoredText
 
@@ -43,3 +43,13 @@ def test_a_word_off_the_list_takes_the_models_gloss() -> None:
         "gloss": "give change",
         "stretch": False,
     }
+
+
+def test_a_compound_of_deck_words_is_glossed_from_its_pieces() -> None:
+    entries = [*ENTRIES, Entry(10, "ร้าน", "shop", "mature"), Entry(11, "อาหาร", "food", "mature")]
+    text = StoredText(7, 1, "t", (Line("A", "ร้านอาหาร", "A restaurant."),), {}, (), 1.0)
+    meanings = {e.text: e.meaning for e in entries}
+    word = render(text, lexicon_from(entries), meanings)["lines"][0]["words"][0]
+    assert word["text"] == "ร้านอาหาร"
+    assert word["status"] == "known"
+    assert word["gloss"] == "shop + food"

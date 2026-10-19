@@ -98,9 +98,16 @@ class Lexicon:
             return "known"
         return "unknown"
 
+    def known_pieces(self, token: str) -> list[str] | None:
+        """The deck entries a known compound splits into (ร้านอาหาร into ร้าน, อาหาร), or None if it
+        doesn't split cleanly into two or more."""
+        pieces = list(word_tokenize(token, custom_dict=self._known_only, engine="newmm"))
+        if len(pieces) > 1 and all(p in self.known or _is_number(p) for p in pieces):
+            return pieces
+        return None
+
     def _splits_into_known(self, token: str) -> bool:
-        pieces = word_tokenize(token, custom_dict=self._known_only, engine="newmm")
-        return len(pieces) > 1 and all(p in self.known or _is_number(p) for p in pieces)
+        return self.known_pieces(token) is not None
 
 
 def parse_line(line: str) -> tuple[str, list[str]]:

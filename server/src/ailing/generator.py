@@ -29,10 +29,12 @@ MAX_ATTEMPTS = 3
 MAX_STRETCH = 3
 STRETCH_MIN_USES = 2
 
-# Per million tokens: input, output, cache read, cache write (5-minute cache, 1.25x input).
+# Per million tokens: input, output, cache read, cache write (5-minute cache, 1.25x input). A model
+# not listed here (a refusal fallback) is priced as MODEL, which is close enough for a running total.
 PRICES = {
     "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
     "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
+    "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25),
 }
 
 
@@ -42,6 +44,7 @@ class Usage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    model: str = ""  # the model that actually answered, which a refusal fallback can change
 
     def __add__(self, other: "Usage") -> "Usage":
         return Usage(
@@ -49,10 +52,11 @@ class Usage:
             self.output_tokens + other.output_tokens,
             self.cache_read_tokens + other.cache_read_tokens,
             self.cache_write_tokens + other.cache_write_tokens,
+            other.model or self.model,
         )
 
-    def cost_usd(self, model: str = MODEL) -> float:
-        inp, out, read, write = PRICES[model]
+    def cost_usd(self) -> float:
+        inp, out, read, write = PRICES.get(self.model or MODEL, PRICES[MODEL])
         return (
             self.input_tokens * inp
             + self.output_tokens * out
@@ -261,15 +265,19 @@ def claude_ask(client: anthropic.AsyncAnthropic, entries: list[Entry]) -> Ask:
     }
 
     async def ask(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Any], Usage]:
-        response = await client.beta.messages.create(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            system=system,
-            messages=cast(list[BetaMessageParam], messages),
-            output_config=output_config,
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
+        try:
+            response = await client.beta.messages.create(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                system=system,
+                messages=cast(list[BetaMessageParam], messages),
+                output_config=output_config,
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+        except anthropic.APIError as e:
+            # Overloaded, rate limited, unreachable: say so rather than failing the request.
+            raise GenerationFailed(f"Claude didn't answer ({type(e).__name__})") from e
         if response.stop_reason == "refusal":
             raise GenerationFailed("Claude declined to write this text")
         if response.stop_reason == "max_tokens":
@@ -287,6 +295,7 @@ def claude_ask(client: anthropic.AsyncAnthropic, entries: list[Entry]) -> Ask:
             u.output_tokens,
             u.cache_read_input_tokens or 0,
             u.cache_creation_input_tokens or 0,
+            response.model,
         )
         return draft, list(response.content), used
 

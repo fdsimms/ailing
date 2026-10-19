@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any
 
 from ailing.coverage import Lexicon
-from ailing.gateway import CallTool
+from ailing.gateway import AnkiUnavailable, CallTool
 from ailing.tiers import Tier, note_tier
 
 THAI_DECK = "👅 Languages::🐘 ภาษาไทย"
@@ -35,10 +35,15 @@ class Entry:
 
 
 async def fetch_snapshot(call: CallTool) -> list[Entry]:
-    note_ids = await _all_note_ids(call)
-    notes = await _notes_info(call, note_ids)
-    cards = await _all_cards(call)
-    return build_entries(notes, cards)
+    """Reads the Thai deck. A reply that isn't the shape the spike recorded raises AnkiUnavailable,
+    like an unreachable Anki, so the caller keeps yesterday's snapshot."""
+    try:
+        note_ids = await _all_note_ids(call)
+        notes = await _notes_info(call, note_ids)
+        cards = await _all_cards(call)
+        return build_entries(notes, cards)
+    except (KeyError, TypeError, AttributeError) as e:
+        raise AnkiUnavailable(f"Anki's reply wasn't the expected shape: {e!r}") from e
 
 
 def build_entries(notes: list[dict[str, Any]], cards: list[dict[str, Any]]) -> list[Entry]:

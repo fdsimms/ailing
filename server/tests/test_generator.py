@@ -161,7 +161,9 @@ def response(stop_reason: str, text: str | None) -> Any:
         cache_read_input_tokens=15000,
         cache_creation_input_tokens=None,
     )
-    return SimpleNamespace(stop_reason=stop_reason, content=content, usage=usage)
+    return SimpleNamespace(
+        stop_reason=stop_reason, content=content, usage=usage, model="claude-sonnet-5-5"
+    )
 
 
 def test_claude_ask_sends_the_cached_lexicon_schema_and_fallback() -> None:
@@ -172,7 +174,7 @@ def test_claude_ask_sends_the_cached_lexicon_schema_and_fallback() -> None:
     parsed, _content, used = asyncio.run(ask([{"role": "user", "content": "hi"}]))
 
     assert parsed == GOOD
-    assert used == Usage(120, 900, 15000, 0)
+    assert used == Usage(120, 900, 15000, 0, "claude-sonnet-5-5")
     call = client.calls[0]
     assert call["model"] == MODEL
     assert call["system"][0]["cache_control"] == {"type": "ephemeral"}
@@ -203,3 +205,30 @@ def test_usage_adds_up_across_attempts() -> None:
 def test_cost_uses_the_model_prices() -> None:
     # 1M of each at Sonnet 5.5 prices: $2 in, $10 out, $0.20 cache read, $2.50 cache write.
     assert Usage(1_000_000, 1_000_000, 1_000_000, 1_000_000).cost_usd() == pytest.approx(14.70)
+
+
+def test_claude_ask_turns_an_api_error_into_generation_failed() -> None:
+    import anthropic
+    import httpx2
+
+    class Down:
+        def __init__(self) -> None:
+            self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+
+        async def create(self, **kwargs: Any) -> Any:
+            raise anthropic.APIConnectionError(request=httpx2.Request("POST", "https://x"))
+
+    ask = claude_ask(Down(), ENTRIES)  # type: ignore[arg-type]
+    with pytest.raises(GenerationFailed, match="APIConnectionError"):
+        asyncio.run(ask([{"role": "user", "content": "hi"}]))
+
+
+def test_the_answering_model_is_recorded_and_priced() -> None:
+    import json
+
+    reply = response("end_turn", json.dumps(GOOD))
+    reply.model = "claude-opus-4-8"
+    _, _, used = asyncio.run(claude_ask(FakeClient(reply), ENTRIES)([]))  # type: ignore[arg-type]
+    assert used.model == "claude-opus-4-8"
+    assert Usage(1_000_000, model="claude-opus-4-8").cost_usd() == pytest.approx(5.0)
+    assert Usage(1_000_000, model="something-new").cost_usd() == pytest.approx(2.0)
