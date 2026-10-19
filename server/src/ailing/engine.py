@@ -24,7 +24,7 @@ from typing import Literal
 
 from ailing import store
 from ailing.coverage import Lexicon, parse_line
-from ailing.difficulty import adapt
+from ailing.difficulty import Difficulty, adapt
 from ailing.gateway import CallTool
 from ailing.generator import Ask, GenerationFailed, TextRequest, generate
 from ailing.lexicon import Entry, lexicon_from
@@ -33,6 +33,8 @@ from ailing.stretch import pick_stretch
 from ailing.tts import DEFAULT_VOICES, AudioCache, Synthesize, TtsFailed
 
 READY_PER_FAVORITE = 1
+# How many due or young words the model chooses its stretch words from, when it's choosing.
+STRETCH_CHOICES = 15
 FAILURE_COOLDOWN = timedelta(minutes=30)
 MISSED_FLOOR = (
     "Couldn't write a text that fits your words this time. Try again or pick another topic."
@@ -183,10 +185,9 @@ class Engine:
             assert self.ask_for is not None
             entries, lexicon = self.snapshot()
             difficulty = store.load_difficulty(self.conn)
-            stretch = pick_stretch(entries, difficulty.stretch, self.rng)
-            request = TextRequest(topic.name, tuple(stretch), floor=difficulty.floor)
+            request = self._request(topic.name, entries, difficulty)
             result = await generate(self.ask_for(entries), lexicon, request)
-            words = [e.text for e in stretch]
+            words = list(result.stretch)
             if not result.passed:
                 # Stored as dropped, never served, so its cost is still on record.
                 store.save_text(
@@ -209,6 +210,15 @@ class Engine:
             await self.make_audio(text)
             store.mark_ready(self.conn, text_id)
             return text
+
+    def _request(self, topic: str, entries: list[Entry], difficulty: Difficulty) -> TextRequest:
+        if store.load_settings(self.conn).stretch_words == "any":
+            stretch = pick_stretch(entries, difficulty.stretch, self.rng)
+            return TextRequest(topic, tuple(stretch), floor=difficulty.floor)
+        choices = pick_stretch(entries, STRETCH_CHOICES, self.rng)
+        if not choices:
+            return TextRequest(topic, floor=difficulty.floor)
+        return TextRequest(topic, tuple(choices), floor=difficulty.floor, choose=difficulty.stretch)
 
     # ==== Audio ====
 

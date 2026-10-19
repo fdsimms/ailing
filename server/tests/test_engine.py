@@ -367,3 +367,30 @@ def test_missing_audio_is_made_on_request_and_then_cached(tmp_path: Path) -> Non
     assert again == path
     assert len(voice.calls) == 1
     assert run(lambda: e.line_audio(text, 9)) is None
+
+
+# ==== Stretch words setting ====
+
+
+def test_by_default_the_model_chooses_stretch_words_from_a_list() -> None:
+    e = engine(ScriptedModel(GOOD))
+    store.save_difficulty(e.conn, Difficulty(stretch=1))
+    request = e._request("Food stall", ENTRIES, store.load_difficulty(e.conn))
+    assert request.choose == 1
+    # Due and young words only; the deck here has just the one.
+    assert [w.text for w in request.stretch] == ["ข้าวเหนียวมะม่วง"]
+
+
+def test_set_to_any_the_stretch_words_are_given() -> None:
+    e = engine(ScriptedModel(GOOD))
+    store.save_settings(e.conn, store.Settings(stretch_words="any"))
+    request = e._request("Food stall", ENTRIES, Difficulty(stretch=2))
+    assert request.choose is None
+    assert [w.text for w in request.stretch] == ["ข้าวเหนียวมะม่วง"]
+
+
+def test_a_text_records_the_stretch_words_the_model_chose() -> None:
+    e = engine(ScriptedModel(GOOD))
+    topic = store.add_topic(e.conn, "Food stall", True, NOW)
+    text = run(lambda: fetch(e, topic.id))
+    assert text.stretch == ("ข้าวเหนียวมะม่วง",)

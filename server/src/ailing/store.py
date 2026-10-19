@@ -1,5 +1,5 @@
-"""SQLite storage: the lexicon snapshot, topics, generated texts, the reading log, and the difficulty
-setting. Only the latest lexicon snapshot is kept (docs/architecture.md, Lexicon)."""
+"""SQLite storage: the lexicon snapshot, topics, generated texts, the reading log, the difficulty
+setting and the owner's settings. Only the latest lexicon snapshot is kept (docs/architecture.md, Lexicon)."""
 
 import json
 import logging
@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ailing.difficulty import Difficulty
 from ailing.gateway import AnkiUnavailable, CallTool
@@ -92,6 +92,16 @@ class StoredText:
     glosses: dict[str, str]
     stretch: tuple[str, ...]
     coverage: float
+
+
+# "topic": the model chooses stretch words that fit the topic from a list of due and young words.
+# "any": the stretch words are picked at random from that list and the model has to use them.
+StretchWords = Literal["topic", "any"]
+
+
+@dataclass(frozen=True)
+class Settings:
+    stretch_words: StretchWords = "topic"
 
 
 @dataclass(frozen=True)
@@ -324,6 +334,21 @@ def load_difficulty(conn: sqlite3.Connection) -> Difficulty:
 def save_difficulty(conn: sqlite3.Connection, difficulty: Difficulty) -> None:
     with conn:
         _set_meta(conn, "difficulty", json.dumps(difficulty.__dict__))
+
+
+# ==== Settings ====
+
+
+def load_settings(conn: sqlite3.Connection) -> Settings:
+    raw = _get_meta(conn, "settings")
+    saved = json.loads(raw) if raw else {}
+    # Only known keys, so a setting removed later doesn't break loading.
+    return Settings(**{k: v for k, v in saved.items() if k in Settings.__dataclass_fields__})
+
+
+def save_settings(conn: sqlite3.Connection, settings: Settings) -> None:
+    with conn:
+        _set_meta(conn, "settings", json.dumps(settings.__dict__))
 
 
 def _get_meta(conn: sqlite3.Connection, key: str) -> str | None:

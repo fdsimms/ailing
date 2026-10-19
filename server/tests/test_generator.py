@@ -232,3 +232,53 @@ def test_the_answering_model_is_recorded_and_priced() -> None:
     assert used.model == "claude-opus-4-8"
     assert Usage(1_000_000, model="claude-opus-4-8").cost_usd() == pytest.approx(5.0)
     assert Usage(1_000_000, model="something-new").cost_usd() == pytest.approx(2.0)
+
+
+# ==== Choosing stretch words ====
+
+ORDER = ENTRIES[5]  # รับอะไรดี
+
+
+def test_the_model_is_offered_words_to_choose_from() -> None:
+    model = ScriptedModel(GOOD)
+    result = run(model, TextRequest("food", (MANGO, ORDER), choose=2))
+
+    assert result.passed
+    assert result.stretch == ("ข้าวเหนียวมะม่วง",)
+    assert result.glosses["ข้าวเหนียวมะม่วง"] == "mango sticky rice"
+    asked = model.sent[0][0]["content"]
+    assert "pick 1 to 2 of these that fit the topic" in asked
+    assert "รับอะไรดี" in asked
+
+
+def test_a_draft_that_chooses_no_stretch_word_goes_back() -> None:
+    model = ScriptedModel(draft("ฉัน|อยาก|กิน|ครับ"), GOOD)
+    result = run(model, TextRequest("food", (MANGO, ORDER), choose=1))
+
+    assert result.passed and result.attempts == 2
+    assert "No stretch word from the list was used" in model.sent[1][2]["content"]
+
+
+def test_a_draft_that_chooses_too_many_goes_back() -> None:
+    both = draft("*ข้าวเหนียวมะม่วง*|*รับอะไรดี*", "*ข้าวเหนียวมะม่วง*|*รับอะไรดี*")
+    model = ScriptedModel(both, GOOD)
+    result = run(model, TextRequest("food", (MANGO, ORDER), choose=1))
+
+    assert result.passed and result.attempts == 2
+    assert "Use at most 1 stretch words" in model.sent[1][2]["content"]
+    assert result.stretch == ("ข้าวเหนียวมะม่วง",)
+
+
+def test_a_chosen_word_used_once_goes_back() -> None:
+    once = draft("ฉัน|อยาก|กิน|*ข้าวเหนียวมะม่วง*|ครับ")
+    model = ScriptedModel(once, GOOD)
+    run(model, TextRequest("food", (MANGO, ORDER), choose=2))
+    assert "appear fewer than 2 times: ข้าวเหนียวมะม่วง" in model.sent[1][2]["content"]
+
+
+def test_choosing_has_the_same_limits() -> None:
+    with pytest.raises(ValueError):
+        TextRequest("food", tuple(ENTRIES[:6]), choose=4)
+    with pytest.raises(ValueError):
+        TextRequest("food", (), choose=1)
+    TextRequest("food", tuple(ENTRIES[:6]), choose=3)  # many to choose from is fine

@@ -34,7 +34,17 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { type Api, ApiError, type Rating, type ReaderText, type Topic, type Word } from "../api";
-import { Card, ErrorNote, Hint, NavBar, PillButton, PrimaryButton, SectionLabel, TextButton } from "../components/ui";
+import {
+  Card,
+  ErrorNote,
+  Hint,
+  NavBar,
+  PillButton,
+  PrimaryButton,
+  SectionLabel,
+  Segments,
+  TextButton,
+} from "../components/ui";
 import { firstLine, nextLine } from "../playback";
 import { RATES } from "../playbackRate";
 import { formatDuration, heard, isFlagged, lookUp, type Session, startSession, toLog, toggleFlag } from "../session";
@@ -535,22 +545,11 @@ function PlayerBar({
           <Text style={[styles.playerHint, { color: c.textSecondary }]}>Tap a line's ▶︎ to replay it</Text>
         </View>
       </View>
-      <View style={[styles.segments, { backgroundColor: c.tertiary }]} accessibilityRole="radiogroup">
-        {RATES.map((r) => (
-          <Pressable
-            key={r}
-            onPress={() => onRate(r)}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: r === rate }}
-            accessibilityLabel={`Speed ${r}`}
-            style={[styles.segment, r === rate && { backgroundColor: c.card }]}
-          >
-            <Text style={[styles.segmentText, { color: r === rate ? c.text : c.textSecondary }]}>
-              {r.toFixed(1)}×
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <Segments
+        options={RATES.map((r) => ({ value: r, label: `${r.toFixed(1)}×`, accessibilityLabel: `Speed ${r}` }))}
+        value={rate}
+        onChange={onRate}
+      />
     </View>
   );
 }
@@ -670,9 +669,6 @@ const styles = StyleSheet.create({
   playerText: { flex: 1 },
   playerTitle: { fontSize: font.md, fontWeight: "600" },
   playerHint: { fontSize: font.sm, marginTop: 2 },
-  segments: { flexDirection: "row", borderRadius: 9, padding: 2 },
-  segment: { flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 7 },
-  segmentText: { fontSize: font.sm, fontWeight: "600" },
   popover: {
     position: "absolute",
     width: POPOVER_WIDTH,

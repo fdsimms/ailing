@@ -10,8 +10,8 @@ import {
   View,
 } from "react-native";
 
-import { type Api, ApiError, type Topic } from "../api";
-import { Card, ErrorNote, Hint, PillButton, SectionLabel, TextButton } from "../components/ui";
+import { type Api, ApiError, type StretchWords, type Topic } from "../api";
+import { Card, ErrorNote, Hint, PillButton, SectionLabel, Segments, TextButton } from "../components/ui";
 import { font, radius, spacing, useColors } from "../theme";
 
 // While a favorite is still being written, check back this often.
@@ -33,6 +33,8 @@ export function TopicsScreen({
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [stretchWords, setStretchWords] = useState<StretchWords | null>(null);
+  const [settingError, setSettingError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -46,6 +48,26 @@ export function TopicsScreen({
   useEffect(() => {
     load();
   }, [load]);
+
+  // Loaded on its own, so the topics still show if this fails.
+  useEffect(() => {
+    api.settings().then(
+      (s) => setStretchWords(s.stretch_words),
+      () => {},
+    );
+  }, [api]);
+
+  async function changeStretchWords(value: StretchWords) {
+    const before = stretchWords;
+    setStretchWords(value);
+    setSettingError(null);
+    try {
+      setStretchWords((await api.updateSettings({ stretch_words: value })).stretch_words);
+    } catch (e) {
+      setStretchWords(before);
+      setSettingError(e instanceof ApiError ? e.message : "Couldn't change that setting. Try again.");
+    }
+  }
 
   // Poll only while the server says a text is being written; a failed write stops it.
   const writing = topics?.some((t) => t.state === "writing") ?? false;
@@ -145,6 +167,22 @@ export function TopicsScreen({
       </View>
       {addError ? <ErrorNote message={addError} /> : null}
       <Hint>New topics start as favorites, so a text is written for them right away.</Hint>
+      {stretchWords ? (
+        <>
+          <SectionLabel>Stretch words</SectionLabel>
+          <Segments
+            style={styles.segments}
+            options={[
+              { value: "topic", label: "Fit the topic" },
+              { value: "any", label: "Any due word" },
+            ]}
+            value={stretchWords}
+            onChange={changeStretchWords}
+          />
+          {settingError ? <ErrorNote message={settingError} /> : null}
+          <Hint>{STRETCH_HINT[stretchWords]}</Hint>
+        </>
+      ) : null}
       <View style={styles.logOut}>
         <TextButton label="Log out" onPress={onLogOut} />
       </View>
@@ -206,6 +244,11 @@ function TopicRow({
   );
 }
 
+const STRETCH_HINT: Record<StretchWords, string> = {
+  topic: "Picked from your due and newer cards to fit the topic. Applies from the next text written.",
+  any: "Any of your due and newer cards, even ones that don't fit the topic. Applies from the next text written.",
+};
+
 const STATE_TEXT: Record<Topic["state"], string | null> = {
   ready: "ready",
   writing: "writing a text",
@@ -253,5 +296,6 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, fontSize: font.lg, minHeight: 44 },
   adding: { marginHorizontal: spacing.smd },
+  segments: { marginHorizontal: spacing.md },
   logOut: { marginTop: spacing.lg },
 });

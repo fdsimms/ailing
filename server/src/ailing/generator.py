@@ -3,7 +3,8 @@ it, and anything under the coverage floor goes back for revision with the proble
 
 The rules this enforces come from docs/brief.md (design principles 2, 4, 5 and 8):
 - coverage is measured by the server's own segmentation, never by the model's `|` breaks
-- 1-3 stretch words, each used 2-3 times
+- 1-3 stretch words, each used 2-3 times; when the model chooses them from a longer list, at least
+  one and no more than it was asked for
 - at most 3 attempts; a text that still misses the floor is returned as not passed, never shown
 
 The revision loop is written against `Ask`, so it's tested without a key. `claude_ask` is the real
@@ -77,13 +78,20 @@ class GenerationFailed(Exception):
 @dataclass(frozen=True)
 class TextRequest:
     topic: str
+    # The stretch words to use, or with `choose` set, the words to choose them from: the model
+    # picks 1 to `choose` of them that fit the topic, so a text about ordering food isn't bent
+    # around "tiger" just because it's due.
     stretch: tuple[Entry, ...] = ()
     lines: int = 8
     floor: float = FLOOR
+    choose: int | None = None
 
     def __post_init__(self) -> None:
-        if len(self.stretch) > MAX_STRETCH:
+        used = len(self.stretch) if self.choose is None else self.choose
+        if used > MAX_STRETCH:
             raise ValueError(f"At most {MAX_STRETCH} stretch words per text")
+        if self.choose is not None and (self.choose < 1 or not self.stretch):
+            raise ValueError("Choosing stretch words needs at least one to choose and a list")
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,7 @@ class Generated:
     passed: bool
     missing_glosses: tuple[str, ...]
     usage: Usage = Usage()
+    stretch: tuple[str, ...] = ()  # the stretch words the text actually uses
 
 
 DRAFT_SCHEMA: dict[str, Any] = {
@@ -172,8 +181,14 @@ def request_message(request: TextRequest) -> str:
         f"Write {request.lines} lines.",
         f"Coverage target: at least {request.floor:.0%} of words from the list.",
     ]
-    if request.stretch:
-        listed = "\n".join(f"- {e.text} ({e.meaning})" for e in request.stretch)
+    listed = "\n".join(f"- {e.text} ({e.meaning})" for e in request.stretch)
+    if request.choose is not None:
+        how_many = "1" if request.choose == 1 else f"1 to {request.choose}"
+        parts.append(
+            f"Stretch words: pick {how_many} of these that fit the topic naturally, and use each "
+            "one you pick 2 or 3 times, wrapped in asterisks. Leave the rest out:\n" + listed
+        )
+    elif request.stretch:
         parts.append(
             "Stretch words: use each of these 2 or 3 times, wrapped in asterisks:\n" + listed
         )
@@ -182,7 +197,7 @@ def request_message(request: TextRequest) -> str:
     return "\n".join(parts)
 
 
-def revision_message(coverage: Coverage, short_stretch: list[str], floor: float) -> str:
+def revision_message(coverage: Coverage, stretch_problems: list[str], floor: float) -> str:
     parts = [
         f"This draft is {coverage.ratio:.1%} known words; the target is at least {floor:.0%}."
         if coverage.ratio < floor
@@ -196,10 +211,7 @@ def revision_message(coverage: Coverage, short_stretch: list[str], floor: float)
             + ", ".join(partial)
             + "."
         )
-    if short_stretch:
-        parts.append(
-            "These stretch words appear fewer than 2 times: " + ", ".join(short_stretch) + "."
-        )
+    parts.extend(stretch_problems)
     parts.append(
         "Rewrite the whole dialogue on the same topic so it fixes this, replacing words with ones "
         "from the list. Return the full dialogue again in the same format."
@@ -214,7 +226,7 @@ async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generate
     for attempt in range(1, MAX_ATTEMPTS + 1):
         draft, content, used = await ask(messages)
         usage += used
-        result, short_stretch = _assess(draft, lexicon, request, attempt)
+        result, stretch_problems = _assess(draft, lexicon, request, attempt)
         result = replace(result, usage=usage)
         if result.passed:
             return result
@@ -223,7 +235,7 @@ async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generate
             messages.append(
                 {
                     "role": "user",
-                    "content": revision_message(result.coverage, short_stretch, request.floor),
+                    "content": revision_message(result.coverage, stretch_problems, request.floor),
                 }
             )
     assert result is not None
@@ -243,16 +255,44 @@ def _assess(
         raise GenerationFailed("The draft has no lines")
 
     coverage = check([ln.text for ln in lines], lexicon)
-    uses = {e.text: sum(1 for t in coverage.tokens if t.text == e.text) for e in request.stretch}
-    short_stretch = [word for word, n in uses.items() if n < STRETCH_MIN_USES]
+    used, problems = _stretch_used(coverage, request)
     # Stretch words are glossed from the deck, so only off-list words need the model's gloss.
-    for word in request.stretch:
+    for word in used:
         glosses.setdefault(word.text, word.meaning)
     missing = tuple(
         w for w in coverage.words("unknown") + coverage.words("partial") if w not in glosses
     )
-    passed = coverage.meets(request.floor) and not short_stretch
-    return Generated(title, lines, glosses, coverage, attempt, passed, missing), short_stretch
+    passed = coverage.meets(request.floor) and not problems
+    stretch = tuple(e.text for e in used)
+    generated = Generated(
+        title, lines, glosses, coverage, attempt, passed, missing, stretch=stretch
+    )
+    return generated, problems
+
+
+def _stretch_used(coverage: Coverage, request: TextRequest) -> tuple[list[Entry], list[str]]:
+    """The stretch words the draft uses, and what's wrong with how it uses them, as sentences for
+    the revision message. A chosen word is one of the offered words the draft put in asterisks."""
+    if request.choose is None:
+        used = list(request.stretch)
+    else:
+        marked = set(coverage.stretch_words)
+        used = [e for e in request.stretch if e.text in marked]
+    problems = []
+    if request.choose is not None and not used:
+        problems.append(
+            "No stretch word from the list was used. Pick at least one and wrap it in asterisks."
+        )
+    if request.choose is not None and len(used) > request.choose:
+        problems.append(
+            f"Use at most {request.choose} stretch words; this draft uses "
+            + ", ".join(e.text for e in used)
+            + "."
+        )
+    uses = {e.text: sum(1 for t in coverage.tokens if t.text == e.text) for e in used}
+    if short := [word for word, n in uses.items() if n < STRETCH_MIN_USES]:
+        problems.append("These stretch words appear fewer than 2 times: " + ", ".join(short) + ".")
+    return used, problems
 
 
 def claude_ask(client: anthropic.AsyncAnthropic, entries: list[Entry]) -> Ask:

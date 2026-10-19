@@ -75,6 +75,15 @@ brief disagree, this file is newer.
   lexicon in the same response, so tap-to-gloss never needs its own API call. Lexicon words use the
   deck's `Meaning`.
 - **Stretch words** are 1-3 words due today or still young. No random assignment.
+- **The model chooses stretch words to fit the topic** (the default). It gets 15 due or young
+  words and uses 1 to the current stretch count of them, so a dialogue about ordering food isn't
+  bent around "tiger" because tiger happens to be due. The text records the ones it used. A text
+  that uses none, too many, or one fewer than 2 times goes back for revision. The other setting,
+  "Any due word", hands the model that many words to use, which keeps every due word in rotation at
+  the cost of odder dialogues. It's a setting on the Topics screen (`GET`/`PATCH /api/settings`),
+  stored on the server so background writes follow it, and like ratings it applies from the next
+  text written. It's separate from difficulty on purpose: ratings decide how many stretch words and
+  how much coverage; this decides only which words.
 
 ## Topics
 
