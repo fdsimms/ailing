@@ -20,6 +20,8 @@ export const lightColors = {
   speakerB: "#D2E6DB",
   speakerBText: "#24563F",
   red: "#C4281C",
+  // Behind a word that isn't in the deck, when the reader highlights them.
+  outsideDeck: "#FBE2B0",
   shadow: "rgba(23, 19, 28, 0.18)",
 };
 
@@ -40,6 +42,7 @@ export const darkColors: Colors = {
   speakerB: "#22392F",
   speakerBText: "#9FD6BB",
   red: "#FF6961",
+  outsideDeck: "#4D3A14",
   shadow: "rgba(0, 0, 0, 0.6)",
 };
 
