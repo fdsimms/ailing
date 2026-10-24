@@ -11,6 +11,20 @@ brief disagree, this file is newer.
 - **Anki over MCP.** The only way into the droplet. The server uses the Python `mcp` SDK as a plain
   client, with a 45-second timeout on every call.
 
+## Anki access
+
+- **Caddy on the droplet, not the add-on's tunnel.** The tunnel (`tunnel.ankimcp.ai`) does its own
+  OAuth login and ignores the add-on's `http_api_key`, and the docs describe no token a script can
+  use: the server got "Invalid or expired token" with a made-up one (24 October 2026). So Caddy
+  terminates HTTPS on a hostname, forwards only requests with `Authorization: Bearer <token>` to
+  `127.0.0.1:3141`, and answers 401 to the rest. Port 3141 stays on loopback; the firewall allows
+  only 22, 80 and 443. The Claude connector still uses the tunnel.
+- **What the token guards.** AnkiMCP includes `delete_notes` and `rate_card`, so a leaked token
+  reaches the whole collection. It is 32 random bytes, kept only in a root-owned env file on the
+  droplet and as a Fly secret, and Caddy won't start with a short or empty one. The server itself
+  only reads (Milestone 1).
+- Caddy adds little memory on the 1 GB droplet. Setup, rotation and rollback: `docs/deploy.md`, step 7.
+
 ## Client
 
 - **An Expo / React Native iOS app** (`client/`), not the brief's home-screen web app. The owner
