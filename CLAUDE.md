@@ -45,7 +45,9 @@ to Anki, languages other than Thai, offline mode, reimplementing FSRS, Drill and
   iOS app in `client/`, on the same Expo, React Native and TypeScript versions as dundundun.
 - All Anki traffic goes through **one gateway** (an MCP client to AnkiMCP via ankimcp.ai). **Every
   call has a 45-second timeout**, because the tunnel hangs rather than errors when Anki is
-  unreachable. If it's down, the app runs from yesterday's snapshot.
+  unreachable. If it's down, the app runs from yesterday's snapshot. The server reaches Anki through
+  a Caddy proxy with a bearer token on the droplet (`proxy/`, `docs/deploy.md` step 7), not the
+  add-on's tunnel. Never commit the proxy's hostname, token or the droplet's IP.
 - The Anki droplet is 1 GB and already swaps under load: never run the app server on it. Where the
   app server runs is an open question.
 - The server reads Anki only for a once-a-day lexicon snapshot (and, later, Drill's due cards).

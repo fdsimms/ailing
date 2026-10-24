@@ -1,0 +1,24 @@
+# Authenticated HTTPS front for AnkiMCP's local server, for the Fly app to reach.
+# Installed on the droplet as /etc/caddy/Caddyfile. docs/deploy.md has the whole setup.
+#
+# Both values come from /etc/caddy/anki-proxy.env, so neither is committed:
+#   ANKI_PROXY_HOST   the hostname pointed at the droplet (read when Caddy loads this file)
+#   ANKI_PROXY_TOKEN  the bearer token the Fly app sends as ANKIMCP_TOKEN (read per request)
+
+{$ANKI_PROXY_HOST} {
+	@authed header Authorization "Bearer {env.ANKI_PROXY_TOKEN}"
+
+	handle @authed {
+		reverse_proxy 127.0.0.1:3141 {
+			# The add-on only accepts loopback Host and Origin values.
+			header_up Host 127.0.0.1:3141
+			header_up -Origin
+			# MCP's streamable HTTP sends events as they happen; don't buffer them.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond 401
+	}
+}
