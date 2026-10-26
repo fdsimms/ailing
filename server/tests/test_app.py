@@ -241,10 +241,10 @@ def test_a_repeated_reading_is_accepted_but_counted_once() -> None:
 
 def test_the_stretch_setting_can_be_read_and_changed() -> None:
     c = client()
-    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "topic"}
+    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "topic", "lines": 8}
     changed = c.patch("/api/settings", headers=AUTH, json={"stretch_words": "any"})
-    assert changed.json() == {"stretch_words": "any"}
-    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "any"}
+    assert changed.json() == {"stretch_words": "any", "lines": 8}
+    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "any", "lines": 8}
     assert (
         c.patch("/api/settings", headers=AUTH, json={"stretch_words": "loose"}).status_code == 422
     )
@@ -308,3 +308,30 @@ def test_marked_words_are_listed_with_glosses_until_cleared() -> None:
     assert c.post("/api/words/clear", json={"word": "ครับ"}, headers=AUTH).status_code == 204
     assert [w["word"] for w in c.get("/api/words", headers=AUTH).json()] == ["ข้าวเหนียวมะม่วง"]
     assert c.get("/api/words").status_code == 401
+
+
+def test_the_length_setting_can_be_changed_to_a_length_offered() -> None:
+    c = client()
+    changed = c.patch("/api/settings", headers=AUTH, json={"lines": 12})
+    assert changed.json() == {"stretch_words": "topic", "lines": 12}
+    assert c.patch("/api/settings", headers=AUTH, json={"lines": 30}).status_code == 422
+
+
+def test_past_texts_lists_texts_read_to_the_end_and_serves_them_again() -> None:
+    c = client()
+    assert c.get("/api/texts", headers=AUTH).json() == []
+    read(c, "about_right", [])
+    read(c, None, [], finished=False)
+
+    [past] = c.get("/api/texts", headers=AUTH).json()
+    assert (past["topic"], past["title"], past["rating"]) == (
+        "Food stall",
+        "At the stall",
+        "about_right",
+    )
+
+    again = c.get(f"/api/texts/{past['id']}", headers=AUTH).json()
+    assert again["title"] == "At the stall"
+    assert [w["text"] for w in again["lines"][0]["words"]][:3] == ["ฉัน", "อยาก", "กิน"]
+    assert c.get("/api/texts/999", headers=AUTH).status_code == 404
+    assert c.get("/api/texts").status_code == 401

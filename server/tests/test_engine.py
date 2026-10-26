@@ -394,3 +394,31 @@ def test_a_text_records_the_stretch_words_the_model_chose() -> None:
     topic = store.add_topic(e.conn, "Food stall", True, NOW)
     text = run(lambda: fetch(e, topic.id))
     assert text.stretch == ("ข้าวเหนียวมะม่วง",)
+
+
+def test_a_stretch_word_from_a_text_read_yesterday_is_offered_again_today() -> None:
+    from datetime import timedelta
+
+    from ailing.lexicon import Entry
+
+    clock = Clock()
+    e = engine(ScriptedModel(GOOD), clock=clock)
+    topic = store.add_topic(e.conn, "Food stall", True, NOW)
+    text = run(lambda: fetch(e, topic.id))
+    e.record_reading(text.id, reading("about_right"))
+    young = [Entry(10 + i, f"คำ{i}", "word", "young", due=True) for i in range(20)]
+    entries = ENTRIES + young
+
+    # Read today: not "an earlier day" yet, so it's only one choice among many.
+    assert store.practiced_days(e.conn, NOW.replace(hour=0)) == {}
+
+    clock.now = NOW + timedelta(days=1)
+    request = e._request("Food stall", entries, Difficulty(stretch=1))
+    assert request.stretch[0].text == "ข้าวเหนียวมะม่วง"
+
+
+def test_the_length_setting_sets_the_number_of_lines_asked_for() -> None:
+    e = engine(ScriptedModel(GOOD))
+    assert e._request("Food stall", ENTRIES, Difficulty()).lines == 8
+    store.save_settings(e.conn, store.Settings(lines=12))
+    assert e._request("Food stall", ENTRIES, Difficulty()).lines == 12
