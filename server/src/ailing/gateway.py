@@ -28,6 +28,16 @@ def with_timeout(call: CallTool, seconds: float = TIMEOUT_SECONDS) -> CallTool:
         except AnkiUnavailable:
             raise
         except Exception as e:
-            raise AnkiUnavailable(f"{name} failed: {e}") from e
+            raise AnkiUnavailable(f"{name} failed: {describe(e)}") from e
 
     return timed
+
+
+def describe(error: BaseException) -> str:
+    """What went wrong, in a sentence. The MCP client runs in task groups, so its real error (a bad
+    token, a refused connection) arrives wrapped in exception groups whose own text is only
+    "unhandled errors in a TaskGroup"; this reads the errors inside instead."""
+    if isinstance(error, BaseExceptionGroup):
+        return "; ".join(describe(inner) for inner in error.exceptions)
+    kind = type(error).__name__
+    return f"{kind}: {error}" if str(error) else kind
