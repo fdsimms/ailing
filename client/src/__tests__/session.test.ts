@@ -1,5 +1,5 @@
 import type { ReaderText } from "../api";
-import { formatDuration, heard, isFlagged, lookUp, startSession, toggleFlag, toLog } from "../session";
+import { formatDuration, heard, isFlagged, listenedOnly, lookUp, startSession, toggleFlag, toLog } from "../session";
 
 const TEXT: ReaderText = { id: 7, topicId: 1, title: "t", coverage: 0.97, stretch: [], roles: {}, lines: [] };
 
@@ -44,4 +44,10 @@ test("the log carries the speed audio last played at", () => {
   const s = startSession(TEXT, 0);
   expect(toLog(s, 0, null, false).audio_speed).toBeNull();
   expect(toLog(heard(heard(s, 0.8), 0.9), 0, null, false).audio_speed).toBe(0.9);
+});
+
+test("a listen-only pass is logged", () => {
+  const s = startSession(TEXT, 0);
+  expect(toLog(s, 0, null, false).listen_only).toBe(false);
+  expect(toLog(listenedOnly(s), 0, "about_right", true).listen_only).toBe(true);
 });

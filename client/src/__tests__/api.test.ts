@@ -84,3 +84,14 @@ test("changing a setting sends only that field", async () => {
   expect(calls[0].init.method).toBe("PATCH");
   expect(JSON.parse(calls[0].init.body as string)).toEqual({ stretch_words: "any" });
 });
+
+test("clearing a marked word posts it, and removing a topic deletes it", async () => {
+  const { impl, calls } = fakeFetch(new Response(null, { status: 204 }));
+  const api = createApi("https://x", "p", impl);
+  await api.clearWord("ทอน");
+  await api.removeTopic(3);
+  expect(calls[0].url).toBe("https://x/api/words/clear");
+  expect(JSON.parse(calls[0].init.body as string)).toEqual({ word: "ทอน" });
+  expect(calls[1].url).toBe("https://x/api/topics/3");
+  expect(calls[1].init.method).toBe("DELETE");
+});
