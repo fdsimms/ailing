@@ -179,3 +179,25 @@ def test_a_database_from_before_removing_topics_gains_the_column(tmp_path) -> No
     from ailing.store import list_topics
 
     assert [t.name for t in list_topics(connect(path))] == ["Taxi"]
+
+
+def test_a_database_from_before_stories_reads_its_texts_as_dialogues(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = connect(path)
+    topic = add_topic(conn, "Food", True, NOW)
+    conn.execute("ALTER TABLE texts DROP COLUMN form")
+    conn.execute(
+        "INSERT INTO texts (topic_id, created_at, title, lines, glosses, stretch, coverage,"
+        " token_count, floor, attempts, model, input_tokens, output_tokens, cache_read_tokens,"
+        " cache_write_tokens, cost_usd) VALUES (?, '2026-10-19', 't', '[]', '{}', '[]', 1, 0,"
+        " 0.95, 1, 'm', 0, 0, 0, 0, 0)",
+        (topic.id,),
+    )
+    conn.commit()
+    conn.close()
+    assert "form" not in {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(texts)")}
+
+    text = get_text(connect(path), 1)
+    assert text is not None and text.form == "dialogue"

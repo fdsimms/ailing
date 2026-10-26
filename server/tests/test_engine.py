@@ -422,3 +422,20 @@ def test_the_length_setting_sets_the_number_of_lines_asked_for() -> None:
     assert e._request("Food stall", ENTRIES, Difficulty()).lines == 8
     store.save_settings(e.conn, store.Settings(lines=12))
     assert e._request("Food stall", ENTRIES, Difficulty()).lines == 12
+
+
+def test_the_form_setting_asks_for_a_story_and_the_text_keeps_it() -> None:
+    from scripted import draft
+
+    story = draft("ฉัน|อยาก|กิน|*ข้าวเหนียวมะม่วง*|ครับ", "*ข้าวเหนียวมะม่วง*|ครับ!")
+    for line in story["lines"]:
+        line["speaker"] = "N"
+    model = ScriptedModel(story)
+    e = engine(model)
+    store.save_settings(e.conn, store.Settings(form="story"))
+    assert e._request("Food stall", ENTRIES, Difficulty()).form == "story"
+
+    topic = store.add_topic(e.conn, "Food stall", True, NOW)
+    text = run(lambda: fetch(e, topic.id))
+    assert text.form == "story"
+    assert {line.speaker for line in text.lines} == {"N"}

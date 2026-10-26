@@ -1,4 +1,4 @@
-"""Text generator: Claude writes a short Thai dialogue from the deck's known words, the server checks
+"""Text generator: Claude writes a short Thai dialogue or story from the deck's known words, the server checks
 it, and anything under the coverage floor goes back for revision with the problem words named.
 
 The rules this enforces come from docs/brief.md (design principles 2, 4, 5 and 8):
@@ -75,6 +75,10 @@ class GenerationFailed(Exception):
     """The model refused, ran out of tokens, or returned something unusable."""
 
 
+# A dialogue between A and B, or a short story told by a narrator (N), one sentence or two a line.
+Form = Literal["dialogue", "story"]
+
+
 @dataclass(frozen=True)
 class TextRequest:
     topic: str
@@ -85,6 +89,7 @@ class TextRequest:
     lines: int = 8
     floor: float = FLOOR
     choose: int | None = None
+    form: Form = "dialogue"
 
     def __post_init__(self) -> None:
         used = len(self.stretch) if self.choose is None else self.choose
@@ -130,7 +135,7 @@ DRAFT_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "speaker": {"type": "string", "enum": ["A", "B"]},
+                    "speaker": {"type": "string", "enum": ["A", "B", "N"]},
                     "text": {"type": "string"},
                     "english": {"type": "string"},
                 },
@@ -153,17 +158,19 @@ DRAFT_SCHEMA: dict[str, Any] = {
 }
 
 _INSTRUCTIONS = """\
-You write short Thai dialogues for one learner to read and listen to. They must be built almost \
-entirely from words the learner already knows, which are listed below.
+You write short Thai texts for one learner to read and listen to: dialogues, or short stories. \
+They must be built almost entirely from words the learner already knows, which are listed below.
 
 Rules:
 - Use only words from the list. A word that appears only inside a longer list entry is not known \
 on its own: รับ is not known just because รับอะไรดี is. Every word outside the list makes the text \
 harder; the server measures this and sends back any text under the learner's coverage target.
 - Prefer entries marked M (well known) over Y (still being learned).
-- Write natural, everyday spoken Thai for the situation, between two speakers, A and B.
-- In "roles", say who A and B are in this situation, in one to three English words each, like \
-"Waiter" and "Customer".
+- A dialogue is natural, everyday spoken Thai between two speakers, A and B. In "roles", say who \
+A and B are in this situation, in one to three English words each, like "Waiter" and "Customer".
+- A story is told by a narrator: every line's speaker is N, each line is one or two simple \
+sentences, and the story has a beginning, something that happens, and an end. Keep the language \
+plain, since description pulls in words the learner may not know. Leave both roles empty.
 - In each line's text, put | between every word, and wrap each stretch word in asterisks every \
 time it appears, like ฉัน|ต้องการ|*น้ำ*. Don't add spaces.
 - Give "english", a natural English translation of each line.
@@ -185,9 +192,10 @@ def system_prompt(entries: list[Entry]) -> str:
 
 
 def request_message(request: TextRequest) -> str:
+    what = "a dialogue" if request.form == "dialogue" else "a short story"
     parts = [
         f"Topic: {request.topic}",
-        f"Write {request.lines} lines.",
+        f"Write {what} of {request.lines} lines.",
         f"Coverage target: at least {request.floor:.0%} of words from the list.",
     ]
     listed = "\n".join(f"- {e.text} ({e.meaning})" for e in request.stretch)
@@ -222,8 +230,8 @@ def revision_message(coverage: Coverage, stretch_problems: list[str], floor: flo
         )
     parts.extend(stretch_problems)
     parts.append(
-        "Rewrite the whole dialogue on the same topic so it fixes this, replacing words with ones "
-        "from the list. Return the full dialogue again in the same format."
+        "Rewrite the whole text on the same topic so it fixes this, replacing words with ones "
+        "from the list. Return the full text again in the same format."
     )
     return " ".join(parts)
 

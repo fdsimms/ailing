@@ -288,3 +288,18 @@ def test_choosing_has_the_same_limits() -> None:
     with pytest.raises(ValueError):
         TextRequest("food", (), choose=1)
     TextRequest("food", tuple(ENTRIES[:6]), choose=3)  # many to choose from is fine
+
+
+def test_a_story_is_asked_for_by_name_and_a_dialogue_by_default() -> None:
+    from ailing.generator import request_message
+
+    assert "Write a dialogue of 8 lines." in request_message(TextRequest("food"))
+    story = request_message(TextRequest("food", lines=6, form="story"))
+    assert "Write a short story of 6 lines." in story
+
+
+def test_the_system_prompt_is_the_same_for_stories_and_dialogues() -> None:
+    # The form goes in the request, so the cached lexicon prefix is shared by both.
+    prompt = system_prompt(ENTRIES)
+    assert "every line's speaker is N" in prompt
+    assert "dialogue" in prompt

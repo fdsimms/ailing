@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from ailing.difficulty import Difficulty
 from ailing.gateway import AnkiUnavailable, CallTool
-from ailing.generator import MODEL, Generated, Line
+from ailing.generator import MODEL, Form, Generated, Line
 from ailing.lexicon import Entry, fetch_snapshot
 
 SNAPSHOT_MAX_AGE = timedelta(hours=24)
@@ -98,6 +98,7 @@ class StoredText:
     stretch: tuple[str, ...]
     coverage: float
     roles: dict[str, str] = field(default_factory=dict)
+    form: Form = "dialogue"
 
 
 # "topic": the model chooses stretch words that fit the topic from a list of due and young words.
@@ -113,6 +114,7 @@ Length = Literal[6, 8, 12]
 class Settings:
     stretch_words: StretchWords = "topic"
     lines: Length = 8
+    form: Form = "dialogue"
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,9 @@ def connect(path: Path | str) -> sqlite3.Connection:
     if "roles" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
         # Texts written before speakers had roles have none, and show only A and B.
         conn.execute("ALTER TABLE texts ADD COLUMN roles TEXT NOT NULL DEFAULT '{}'")
+    if "form" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
+        # Every text written before stories was a dialogue.
+        conn.execute("ALTER TABLE texts ADD COLUMN form TEXT NOT NULL DEFAULT 'dialogue'")
     if "removed" not in {r[1] for r in conn.execute("PRAGMA table_info(topics)")}:
         # A removed topic is hidden, not deleted, since its texts and readings point at it.
         conn.execute("ALTER TABLE topics ADD COLUMN removed INTEGER NOT NULL DEFAULT 0")
@@ -259,6 +264,7 @@ def save_text(
     floor: float,
     now: datetime,
     status: str = "ready",
+    form: Form = "dialogue",
 ) -> int:
     """Stores a generated text. `status` is "pending" while its audio is made, "ready" once it can
     be served, or "dropped" for a text that missed the floor (kept only for its cost)."""
@@ -267,8 +273,8 @@ def save_text(
         cur = conn.execute(
             """INSERT INTO texts (topic_id, created_at, status, title, lines, glosses, stretch,
                    coverage, token_count, floor, attempts, model, input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens, cost_usd, roles)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   cache_read_tokens, cache_write_tokens, cost_usd, roles, form)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 topic_id,
                 now.isoformat(),
@@ -288,6 +294,7 @@ def save_text(
                 u.cache_write_tokens,
                 u.cost_usd(),
                 json.dumps(generated.roles, ensure_ascii=False),
+                form,
             ),
         )
     assert cur.lastrowid is not None
@@ -318,11 +325,11 @@ def get_text(conn: sqlite3.Connection, text_id: int) -> StoredText | None:
     return _text(row) if row else None
 
 
-_TEXT_COLUMNS = "id, topic_id, title, lines, glosses, stretch, coverage, roles"
+_TEXT_COLUMNS = "id, topic_id, title, lines, glosses, stretch, coverage, roles, form"
 
 
 def _text(row: tuple[Any, ...]) -> StoredText:
-    text_id, topic_id, title, lines, glosses, stretch, coverage, roles = row
+    text_id, topic_id, title, lines, glosses, stretch, coverage, roles, form = row
     return StoredText(
         id=text_id,
         topic_id=topic_id,
@@ -332,6 +339,7 @@ def _text(row: tuple[Any, ...]) -> StoredText:
         stretch=tuple(json.loads(stretch)),
         coverage=coverage,
         roles=json.loads(roles),
+        form=form,
     )
 
 
@@ -409,19 +417,20 @@ class PastText:
     rating: str | None
     read_at: datetime
     coverage: float
+    form: Form = "dialogue"
 
 
 def past_texts(conn: sqlite3.Connection, limit: int) -> list[PastText]:
     """Texts read to the end, most recent first."""
     rows = conn.execute(
-        """SELECT x.id, t.name, x.title, r.rating, r.logged_at, x.coverage FROM readings r
+        """SELECT x.id, t.name, x.title, r.rating, r.logged_at, x.coverage, x.form FROM readings r
            JOIN texts x ON x.id = r.text_id JOIN topics t ON t.id = x.topic_id
            WHERE r.finished = 1 ORDER BY r.id DESC LIMIT ?""",
         (limit,),
     )
     return [
-        PastText(i, topic, title, rating, datetime.fromisoformat(at), coverage)
-        for i, topic, title, rating, at, coverage in rows
+        PastText(i, topic, title, rating, datetime.fromisoformat(at), coverage, form)
+        for i, topic, title, rating, at, coverage, form in rows
     ]
 
 

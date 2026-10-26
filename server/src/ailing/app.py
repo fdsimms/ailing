@@ -9,7 +9,8 @@
     GET   /api/suggestions            topic ideas not yet added, the best fit for the deck first
     POST  /api/topics/{id}/next       the next text for a topic; 202 {"writing": true} while one is
                                       being written in the background, so ask again shortly
-    GET   /api/settings               {stretch_words: "topic" | "any", lines: 6 | 8 | 12}
+    GET   /api/settings               {stretch_words: "topic" | "any", lines: 6 | 8 | 12,
+                                      form: "dialogue" | "story"}
     PATCH /api/settings               the same fields; takes effect from the next text written
     GET   /api/texts                  texts read to the end, newest first, to read again
     GET   /api/texts/{id}             one text, in the same shape as /next; reading it again isn't logged
@@ -35,7 +36,7 @@ from pydantic import BaseModel, Field
 from ailing import config, store
 from ailing.ankimcp import ankimcp_call_tool
 from ailing.engine import Engine, NotAvailable, NotFound
-from ailing.generator import Ask, claude_ask
+from ailing.generator import Ask, Form, claude_ask
 from ailing.lexicon import Entry
 from ailing.reader import gloss_for, render
 from ailing.store import Length, Reading, Settings, StoredText, StretchWords, Topic
@@ -64,6 +65,7 @@ class ClearWord(BaseModel):
 class SettingsUpdate(BaseModel):
     stretch_words: StretchWords | None = None
     lines: Length | None = None
+    form: Form | None = None
 
 
 class ReadingIn(BaseModel):
@@ -155,6 +157,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
                 "rating": t.rating,
                 "read_at": t.read_at.isoformat(),
                 "coverage": t.coverage,
+                "form": t.form,
             }
             for t in store.past_texts(engine.conn, PAST_TEXTS)
         ]
@@ -186,6 +189,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         updated = Settings(
             stretch_words=body.stretch_words or current.stretch_words,
             lines=body.lines or current.lines,
+            form=body.form or current.form,
         )
         store.save_settings(engine.conn, updated)
         return updated.__dict__
