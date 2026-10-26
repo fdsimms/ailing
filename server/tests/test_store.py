@@ -9,13 +9,16 @@ from ailing.gateway import AnkiUnavailable, with_timeout
 from ailing.lexicon import Entry
 from ailing.store import (
     Settings,
+    add_topic,
     connect,
+    get_text,
     is_stale,
     load_settings,
     load_snapshot,
     refresh_if_stale,
     save_settings,
     save_snapshot,
+    save_text,
 )
 
 NOW = datetime(2026, 10, 19, 9, 0)
@@ -110,3 +113,25 @@ def test_settings_default_to_choosing_stretch_words_and_round_trip(conn) -> None
 def test_a_setting_that_no_longer_exists_is_ignored(conn) -> None:  # type: ignore[no-untyped-def]
     conn.execute("INSERT INTO meta (key, value) VALUES ('settings', '{\"retired\": 1}')")
     assert load_settings(conn) == Settings()
+
+
+def test_a_text_keeps_its_speakers_roles(conn) -> None:  # type: ignore[no-untyped-def]
+    from test_generator import GOOD, MANGO, ScriptedModel, run
+
+    from ailing.generator import TextRequest
+
+    generated = run(ScriptedModel(GOOD), TextRequest("food", (MANGO,)))
+    topic = add_topic(conn, "food", True, NOW)
+    text_id = save_text(conn, topic.id, generated, [], 0.95, NOW)
+    stored = get_text(conn, text_id)
+    assert stored is not None and stored.roles == {"A": "Vendor", "B": "Customer"}
+
+
+def test_a_database_from_before_roles_gains_the_column(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    path = tmp_path / "old.db"
+    first = connect(path)
+    first.execute("ALTER TABLE texts DROP COLUMN roles")
+    first.commit()
+    first.close()
+    columns = {r[1] for r in connect(path).execute("PRAGMA table_info(texts)")}
+    assert "roles" in columns

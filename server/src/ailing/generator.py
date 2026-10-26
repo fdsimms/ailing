@@ -14,7 +14,7 @@ conversation (append-only, so the model's thinking stays valid across turns).
 
 import json
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 import anthropic
@@ -112,12 +112,19 @@ class Generated:
     missing_glosses: tuple[str, ...]
     usage: Usage = Usage()
     stretch: tuple[str, ...] = ()  # the stretch words the text actually uses
+    roles: dict[str, str] = field(default_factory=dict)  # speaker -> who they are, e.g. "Waiter"
 
 
 DRAFT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
+        "roles": {
+            "type": "object",
+            "properties": {"A": {"type": "string"}, "B": {"type": "string"}},
+            "required": ["A", "B"],
+            "additionalProperties": False,
+        },
         "lines": {
             "type": "array",
             "items": {
@@ -141,7 +148,7 @@ DRAFT_SCHEMA: dict[str, Any] = {
             },
         },
     },
-    "required": ["title", "lines", "glosses"],
+    "required": ["title", "roles", "lines", "glosses"],
     "additionalProperties": False,
 }
 
@@ -155,6 +162,8 @@ on its own: รับ is not known just because รับอะไรดี is. 
 harder; the server measures this and sends back any text under the learner's coverage target.
 - Prefer entries marked M (well known) over Y (still being learned).
 - Write natural, everyday spoken Thai for the situation, between two speakers, A and B.
+- In "roles", say who A and B are in this situation, in one to three English words each, like \
+"Waiter" and "Customer".
 - In each line's text, put | between every word, and wrap each stretch word in asterisks every \
 time it appears, like ฉัน|ต้องการ|*น้ำ*. Don't add spaces.
 - Give "english", a natural English translation of each line.
@@ -249,6 +258,7 @@ def _assess(
         lines = tuple(Line(ln["speaker"], ln["text"], ln["english"]) for ln in draft["lines"])
         glosses = {g["word"]: g["english"] for g in draft["glosses"]}
         title = draft["title"]
+        roles = {k: str(v).strip() for k, v in draft.get("roles", {}).items() if str(v).strip()}
     except (KeyError, TypeError) as e:
         raise GenerationFailed(f"The draft is missing a field: {e}") from e
     if not lines:
@@ -265,7 +275,7 @@ def _assess(
     passed = coverage.meets(request.floor) and not problems
     stretch = tuple(e.text for e in used)
     generated = Generated(
-        title, lines, glosses, coverage, attempt, passed, missing, stretch=stretch
+        title, lines, glosses, coverage, attempt, passed, missing, stretch=stretch, roles=roles
     )
     return generated, problems
 

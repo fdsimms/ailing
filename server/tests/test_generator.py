@@ -33,6 +33,7 @@ MANGO = ENTRIES[3]
 def draft(*texts: str, glosses: dict[str, str] | None = None) -> dict[str, Any]:
     return {
         "title": "At the stall",
+        "roles": {"A": "Vendor", "B": "Customer"},
         "lines": [
             {"speaker": "AB"[i % 2], "text": t, "english": f"line {i}"} for i, t in enumerate(texts)
         ],
@@ -67,6 +68,11 @@ def test_a_good_first_draft_passes_in_one_attempt() -> None:
     assert result.passed and result.attempts == 1
     assert result.coverage.ratio == 1.0
     assert result.glosses["ข้าวเหนียวมะม่วง"] == "mango sticky rice"
+
+
+def test_the_models_roles_for_the_speakers_are_kept() -> None:
+    result = run(ScriptedModel(GOOD), TextRequest("food", (MANGO,)))
+    assert result.roles == {"A": "Vendor", "B": "Customer"}
 
 
 def test_a_draft_under_the_floor_goes_back_with_the_words_named() -> None:

@@ -22,6 +22,7 @@ export type ReaderText = {
   title: string;
   coverage: number;
   stretch: string[];
+  roles: Partial<Record<"A" | "B", string>>; // who each speaker is; empty for older texts
   lines: TextLine[];
 };
 

@@ -4,7 +4,7 @@ setting and the owner's settings. Only the latest lexicon snapshot is kept (docs
 import json
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -92,6 +92,7 @@ class StoredText:
     glosses: dict[str, str]
     stretch: tuple[str, ...]
     coverage: float
+    roles: dict[str, str] = field(default_factory=dict)
 
 
 # "topic": the model chooses stretch words that fit the topic from a list of due and young words.
@@ -121,6 +122,9 @@ def connect(path: Path | str) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA)
+    if "roles" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
+        # Texts written before speakers had roles have none, and show only A and B.
+        conn.execute("ALTER TABLE texts ADD COLUMN roles TEXT NOT NULL DEFAULT '{}'")
     with conn:
         # A text left pending by a restart mid-audio: its missing lines are made on request.
         conn.execute("UPDATE texts SET status = 'ready' WHERE status = 'pending'")
@@ -229,8 +233,8 @@ def save_text(
         cur = conn.execute(
             """INSERT INTO texts (topic_id, created_at, status, title, lines, glosses, stretch,
                    coverage, token_count, floor, attempts, model, input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens, cost_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   cache_read_tokens, cache_write_tokens, cost_usd, roles)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 topic_id,
                 now.isoformat(),
@@ -249,6 +253,7 @@ def save_text(
                 u.cache_read_tokens,
                 u.cache_write_tokens,
                 u.cost_usd(),
+                json.dumps(generated.roles, ensure_ascii=False),
             ),
         )
     assert cur.lastrowid is not None
@@ -279,11 +284,11 @@ def get_text(conn: sqlite3.Connection, text_id: int) -> StoredText | None:
     return _text(row) if row else None
 
 
-_TEXT_COLUMNS = "id, topic_id, title, lines, glosses, stretch, coverage"
+_TEXT_COLUMNS = "id, topic_id, title, lines, glosses, stretch, coverage, roles"
 
 
 def _text(row: tuple[Any, ...]) -> StoredText:
-    text_id, topic_id, title, lines, glosses, stretch, coverage = row
+    text_id, topic_id, title, lines, glosses, stretch, coverage, roles = row
     return StoredText(
         id=text_id,
         topic_id=topic_id,
@@ -292,6 +297,7 @@ def _text(row: tuple[Any, ...]) -> StoredText:
         glosses=json.loads(glosses),
         stretch=tuple(json.loads(stretch)),
         coverage=coverage,
+        roles=json.loads(roles),
     )
 
 

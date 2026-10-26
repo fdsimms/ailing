@@ -40,5 +40,6 @@ def render(text: StoredText, lexicon: Lexicon, meanings: dict[str, str]) -> dict
         "title": text.title,
         "coverage": text.coverage,
         "stretch": list(text.stretch),
+        "roles": text.roles,
         "lines": lines,
     }

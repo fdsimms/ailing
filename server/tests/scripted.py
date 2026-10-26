@@ -19,6 +19,7 @@ ENTRIES = [
 def draft(*texts: str, glosses: dict[str, str] | None = None) -> dict[str, Any]:
     return {
         "title": "At the stall",
+        "roles": {"A": "Vendor", "B": "Customer"},
         "lines": [
             {"speaker": "AB"[i % 2], "text": t, "english": f"line {i}"} for i, t in enumerate(texts)
         ],
