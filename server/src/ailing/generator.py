@@ -21,6 +21,7 @@ from typing import Any, Literal, cast
 import anthropic
 from anthropic.types.beta import BetaMessageParam, BetaOutputConfigParam, BetaTextBlockParam
 
+from ailing import grammar
 from ailing.coverage import FLOOR, MINIMUM, Checker, Coverage, check
 from ailing.languages import Code
 from ailing.lexicon import Entry
@@ -93,6 +94,9 @@ class TextRequest:
     choose: int | None = None
     form: Form = "dialogue"
     language: Code = "th"
+    # Grammar point ids (grammar.py): used at least twice each, or kept out.
+    practice: tuple[str, ...] = ()
+    avoid: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         used = len(self.stretch) if self.choose is None else self.choose
@@ -122,6 +126,9 @@ class Generated:
     stretch: tuple[str, ...] = ()  # the stretch words the text actually uses
     roles: dict[str, str] = field(default_factory=dict)  # speaker -> who they are, e.g. "Waiter"
     floor_met: bool = True  # False for a closest attempt kept under the floor
+    # Uses of a practiced point short of the 2 asked for, plus uses of an avoided one. The
+    # closest attempt kept under the rules can have some.
+    grammar_problems: int = 0
 
 
 DRAFT_SCHEMA: dict[str, Any] = {
@@ -256,10 +263,51 @@ def request_message(request: TextRequest) -> str:
         )
     else:
         parts.append("No stretch words this time.")
+    if request.practice:
+        parts.append(
+            f"Grammar to practice: use each of these at least {grammar.PRACTICE_USES} times, "
+            "where it fits naturally:\n" + _grammar_list(request.practice)
+        )
+    if request.avoid:
+        parts.append(
+            "Grammar to avoid: the learner hasn't learned these yet, so don't use them at all; "
+            "say it another way:\n" + _grammar_list(request.avoid)
+        )
     return "\n".join(parts)
 
 
-def revision_message(coverage: Coverage, stretch_problems: list[str], floor: float) -> str:
+def _grammar_list(point_ids: tuple[str, ...]) -> str:
+    return "\n".join(f"- {grammar.POINTS[p].name} ({grammar.POINTS[p].note})" for p in point_ids)
+
+
+def grammar_problems(
+    lines: list[str], lexicon: Checker, request: TextRequest
+) -> tuple[list[str], int]:
+    """What's wrong with a draft's grammar, as sentences for the revision message, and how much:
+    each use short of a practiced point, plus each use of an avoided one."""
+    found = grammar.find_in_lines(lines, lexicon, request.practice + request.avoid)
+    problems = []
+    misses = 0
+    for pid in request.practice:
+        if (n := len(found[pid])) < grammar.PRACTICE_USES:
+            misses += grammar.PRACTICE_USES - n
+            problems.append(
+                f"Use the {grammar.POINTS[pid].name} at least {grammar.PRACTICE_USES} times; "
+                f"this draft uses it {n} {'time' if n == 1 else 'times'}."
+            )
+    for pid in request.avoid:
+        if used := found[pid]:
+            misses += len(used)
+            problems.append(
+                f"Don't use the {grammar.POINTS[pid].name}; this draft has: "
+                + ", ".join(dict.fromkeys(used))
+                + ". Say those another way."
+            )
+    return problems, misses
+
+
+def revision_message(coverage: Coverage, problems: list[str], floor: float) -> str:
+    """`problems` are the stretch word and grammar problems, as sentences."""
     parts = [
         f"This draft is {coverage.ratio:.1%} known words; the target is at least {floor:.0%}."
         if coverage.ratio < floor
@@ -273,7 +321,7 @@ def revision_message(coverage: Coverage, stretch_problems: list[str], floor: flo
             + ", ".join(partial)
             + "."
         )
-    parts.extend(stretch_problems)
+    parts.extend(problems)
     parts.append(
         "Rewrite the whole text on the same topic so it fixes this, replacing words with ones "
         "from the list. Return the full text again in the same format."
@@ -289,18 +337,20 @@ async def generate(ask: Ask, lexicon: Checker, request: TextRequest) -> Generate
     for attempt in range(1, MAX_ATTEMPTS + 1):
         draft, content, used = await ask(messages)
         usage += used
-        result, stretch_problems = _assess(draft, lexicon, request, attempt)
+        result, problems = _assess(draft, lexicon, request, attempt)
         result = replace(result, usage=usage)
         if result.passed:
             return result
-        if best is None or result.coverage.ratio >= best.coverage.ratio:
+        # Fewer grammar problems first, then higher coverage; the later attempt on a tie.
+        rank = (-result.grammar_problems, result.coverage.ratio)
+        if best is None or rank >= (-best.grammar_problems, best.coverage.ratio):
             best = result
         if attempt < MAX_ATTEMPTS:
             messages.append({"role": "assistant", "content": content})
             messages.append(
                 {
                     "role": "user",
-                    "content": revision_message(result.coverage, stretch_problems, request.floor),
+                    "content": revision_message(result.coverage, problems, request.floor),
                 }
             )
     assert result is not None and best is not None
@@ -331,6 +381,8 @@ def _assess(
 
     coverage = check([ln.text for ln in lines], lexicon)
     used, problems = _stretch_used(coverage, request, lexicon)
+    grammar_issues, grammar_misses = grammar_problems([ln.text for ln in lines], lexicon, request)
+    problems += grammar_issues
     # Stretch words are glossed from the deck, so only off-list words need the model's gloss.
     for word in used:
         glosses.setdefault(word.text, word.meaning)
@@ -340,7 +392,16 @@ def _assess(
     passed = coverage.meets(request.floor) and not problems
     stretch = tuple(e.text for e in used)
     generated = Generated(
-        title, lines, glosses, coverage, attempt, passed, missing, stretch=stretch, roles=roles
+        title,
+        lines,
+        glosses,
+        coverage,
+        attempt,
+        passed,
+        missing,
+        stretch=stretch,
+        roles=roles,
+        grammar_problems=grammar_misses,
     )
     return generated, problems
 

@@ -171,6 +171,7 @@ def test_a_spanish_text_renders_with_spaces_deck_flags_and_glosses_from_the_entr
         "gloss": "warhead",
         "stretch": True,
         "deck": True,
+        "grammar": None,
     }
     ciudad = next(w for w in words if w["text"] == "ciudad")
     assert ciudad["deck"] is False and ciudad["status"] == "known"

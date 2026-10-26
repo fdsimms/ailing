@@ -20,6 +20,9 @@ marked words, ideas) is in the current language, the `language` setting.
     POST  /api/texts/{id}/reading     logs a session with a text and adjusts difficulty
     GET   /api/progress               finished texts, coverage and ratings over the last 14 days,
                                       and the difficulty the next text is written at
+    GET   /api/grammar                the current language's grammar points, each practice, avoid
+                                      or normal
+    PUT   /api/grammar/{id}           {state}; at most 2 practiced at once; from the next text
     GET   /api/words                  words marked unknown and not cleared, newest first
     POST  /api/words/clear            {word} takes a word off that list until it's marked again
     GET   /api/texts/{id}/lines/{n}/audio   one line's MP3, made now if it isn't cached yet
@@ -36,7 +39,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from ailing import config, store
+from ailing import config, grammar, store
 from ailing.ankimcp import ankimcp_call_tool
 from ailing.engine import Engine, NotAvailable, NotFound
 from ailing.generator import Ask, Form, claude_ask
@@ -60,6 +63,10 @@ class NewTopic(BaseModel):
 
 class TopicUpdate(BaseModel):
     favorite: bool
+
+
+class GrammarChoice(BaseModel):
+    state: Literal["practice", "avoid", "normal"]
 
 
 class ClearWord(BaseModel):
@@ -251,6 +258,42 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
             }
             for w in store.marked_words(engine.conn, language)
         ]
+
+    def grammar_points() -> dict[str, Any]:
+        choices = store.load_grammar(engine.conn)
+        return {
+            "max_practice": grammar.MAX_PRACTICE,
+            "points": [
+                {"id": p.id, "name": p.name, "note": p.note, "state": choices.get(p.id, "normal")}
+                for p in grammar.points_for(engine.language())
+            ],
+        }
+
+    @app.get("/api/grammar", dependencies=authed)
+    async def get_grammar() -> dict[str, Any]:
+        return grammar_points()
+
+    @app.put("/api/grammar/{point_id}", dependencies=authed)
+    async def choose_grammar(point_id: str, body: GrammarChoice) -> dict[str, Any]:
+        point = grammar.POINTS.get(point_id)
+        if point is None:
+            raise HTTPException(404, "No such grammar point.")
+        choices = store.load_grammar(engine.conn)
+        practiced = [
+            pid
+            for pid, state in choices.items()
+            if state == "practice"
+            and pid != point_id
+            and pid in grammar.POINTS
+            and grammar.POINTS[pid].language == point.language
+        ]
+        if body.state == "practice" and len(practiced) >= grammar.MAX_PRACTICE:
+            raise HTTPException(
+                422,
+                f"Practice at most {grammar.MAX_PRACTICE} at a time. Set one back to Normal first.",
+            )
+        store.set_grammar(engine.conn, point_id, body.state)
+        return grammar_points()
 
     @app.post("/api/words/clear", status_code=204, dependencies=authed)
     async def clear_word(body: ClearWord) -> Response:

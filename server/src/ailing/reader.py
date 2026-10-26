@@ -4,6 +4,7 @@ Generation and coverage)."""
 
 from typing import Any
 
+from ailing import grammar
 from ailing.coverage import Checker, is_word, parse_line
 from ailing.store import StoredText
 
@@ -24,16 +25,31 @@ def gloss_for(
 
 def render(text: StoredText, lexicon: Checker, meanings: dict[str, str]) -> dict[str, Any]:
     stretch = set(text.stretch)
+    practice = tuple(text.grammar.get("practice", []))
+    avoid = tuple(text.grammar.get("avoid", []))
     lines = []
     for line in text.lines:
         plain, _ = parse_line(line.text, lexicon.spaced)
+        # Which words use a practiced or avoided point, by index among the line's words.
+        marked = grammar.marks(plain, lexicon, practice + avoid)
+        at = 0
         words = []
         for piece in lexicon.segment(plain):
             if not is_word(piece):
                 words.append(
-                    {"text": piece, "status": None, "gloss": None, "stretch": False, "deck": False}
+                    {
+                        "text": piece,
+                        "status": None,
+                        "gloss": None,
+                        "stretch": False,
+                        "deck": False,
+                        "grammar": None,
+                    }
                 )
                 continue
+            covers = grammar.count_words(piece, lexicon.spaced)
+            point = next((marked[i] for i in range(at, at + covers) if i in marked), None)
+            at += covers
             entry = lexicon.entry_of(piece)
             words.append(
                 {
@@ -43,6 +59,7 @@ def render(text: StoredText, lexicon: Checker, meanings: dict[str, str]) -> dict
                     "stretch": (entry or piece) in stretch,
                     # A deck word, as against one known for being common (Spanish only).
                     "deck": entry is not None,
+                    "grammar": point,
                 }
             )
         lines.append({"speaker": line.speaker, "english": line.english, "words": words})
@@ -55,5 +72,17 @@ def render(text: StoredText, lexicon: Checker, meanings: dict[str, str]) -> dict
         "roles": text.roles,
         "form": text.form,
         "language": text.language,
+        # The grammar this text was written to practice or avoid, for the reader's notes.
+        "grammar": [
+            {
+                "id": pid,
+                "name": grammar.POINTS[pid].name,
+                "note": grammar.POINTS[pid].note,
+                "role": role,
+            }
+            for role, ids in (("practice", practice), ("avoid", avoid))
+            for pid in ids
+            if pid in grammar.POINTS
+        ],
         "lines": lines,
     }
