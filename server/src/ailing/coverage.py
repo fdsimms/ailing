@@ -34,6 +34,10 @@ _NUMBER = re.compile(r"^[0-9๐-๙]+([.,][0-9๐-๙]+)*$")
 _NOT_A_WORD = re.compile(r"^[\W_ๆฯ]+$")
 
 
+# Whitespace with a Thai character on each side.
+_BETWEEN_THAI = re.compile(r"(?<=[฀-๿])\s+(?=[฀-๿])")
+
+
 @dataclass(frozen=True)
 class Token:
     text: str
@@ -111,9 +115,11 @@ class Lexicon:
 
 
 def parse_line(line: str) -> tuple[str, list[str]]:
-    """A model line (`ฉัน|ต้องการ|*น้ำ*`) as plain text plus its stretch words."""
+    """A model line (`ฉัน|ต้องการ|*น้ำ*`) as plain text plus its stretch words. Thai is written
+    without spaces, so any the model adds between Thai characters are dropped."""
     stretch = re.findall(r"\*([^*|]+)\*", line)
-    return line.replace("|", "").replace("*", ""), [s.strip() for s in stretch]
+    plain = line.replace("|", "").replace("*", "")
+    return _BETWEEN_THAI.sub("", plain), [s.strip() for s in stretch]
 
 
 def check(lines: Iterable[str], lexicon: Lexicon) -> Coverage:

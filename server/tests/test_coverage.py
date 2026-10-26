@@ -92,6 +92,11 @@ def test_stretch_words_are_read_from_asterisks() -> None:
     assert parse_line("ฉัน|ต้องการ|*น้ำ*") == ("ฉันต้องการน้ำ", ["น้ำ"])
 
 
+def test_spaces_between_thai_characters_are_dropped() -> None:
+    assert parse_line("สวัสดี ค่ะ|รับอะไรดี คะ?")[0] == "สวัสดีค่ะรับอะไรดีคะ?"
+    assert parse_line("OK ค่ะ")[0] == "OK ค่ะ"
+
+
 def test_stretch_words_are_listed_once_in_order(lexicon: Lexicon) -> None:
     result = check(["*ทอน*|ครับ", "ฉัน|*เก็บ*|*ทอน*"], lexicon)
     assert result.stretch_words == ("ทอน", "เก็บ")
