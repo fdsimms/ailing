@@ -149,7 +149,7 @@ def test_a_dropped_text_is_kept_for_its_cost_but_never_served() -> None:
 def test_a_claude_error_is_reported_to_the_next_request() -> None:
     e = engine(ScriptedModel(GOOD))
 
-    def failing(entries: Any) -> Any:
+    def failing(entries: Any, language: Any) -> Any:
         async def ask(messages: Any) -> Any:
             raise GenerationFailed("Claude didn't answer (APIConnectionError)")
 
@@ -175,7 +175,7 @@ def test_says_what_is_missing() -> None:
 
     no_words = engine(ScriptedModel(GOOD), with_lexicon=False)
     topic = store.add_topic(no_words.conn, "Food stall", True, NOW)
-    with pytest.raises(NotAvailable, match="no word list"):
+    with pytest.raises(NotAvailable, match="no Thai word list"):
         run(lambda: no_words.next_text(topic.id))
 
 

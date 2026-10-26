@@ -30,8 +30,11 @@ class TtsFailed(Exception):
 
 
 def ssml(text: str, voice: str) -> str:
+    # The language is the voice's own: th-TH from th-TH-NiwatNeural, es-MX from es-MX-JorgeNeural.
+    parts = voice.split("-")
+    lang = "-".join(parts[:2]) if len(parts) > 2 else "th-TH"
     return (
-        "<speak version='1.0' xml:lang='th-TH'>"
+        f"<speak version='1.0' xml:lang={quoteattr(lang)}>"
         f"<voice name={quoteattr(voice)}>{escape(text)}</voice>"
         "</speak>"
     )

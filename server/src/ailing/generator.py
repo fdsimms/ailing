@@ -21,7 +21,8 @@ from typing import Any, Literal, cast
 import anthropic
 from anthropic.types.beta import BetaMessageParam, BetaOutputConfigParam, BetaTextBlockParam
 
-from ailing.coverage import FLOOR, MINIMUM, Coverage, Lexicon, check
+from ailing.coverage import FLOOR, MINIMUM, Checker, Coverage, check
+from ailing.languages import Code
 from ailing.lexicon import Entry
 
 MODEL = "claude-sonnet-5-5"
@@ -91,6 +92,7 @@ class TextRequest:
     floor: float = FLOOR
     choose: int | None = None
     form: Form = "dialogue"
+    language: Code = "th"
 
     def __post_init__(self) -> None:
         used = len(self.stretch) if self.choose is None else self.choose
@@ -185,15 +187,51 @@ is not in the list.
 Known words, one per line as: word | meaning | M or Y
 """
 
+# Spanish counts the 10,000 most common words as known as well as the deck (spanish.py), and the
+# deck holds advanced words, so the list is what to recycle rather than the only words allowed.
+_SPANISH_INSTRUCTIONS = """\
+You write short Spanish texts for one learner to read and listen to: dialogues, or short stories. \
+Write Mexican Spanish: ustedes, never vosotros. The learner knows the 10,000 most common Spanish \
+words, in all their forms, plus the words and phrases listed below, which are advanced words from \
+their own flashcards.
 
-def system_prompt(entries: list[Entry]) -> str:
+Rules:
+- Use common, everyday Spanish freely, along with words from the list. Every other word (anything \
+rarer than the 10,000 most common words and not on the list) makes the text harder; the server \
+measures this and sends back any text under the learner's coverage target. A word that appears \
+only inside a longer list phrase is not known on its own: quemarropa is not known just because \
+"a quemarropa" is.
+- Before you answer, go through your draft word by word and check each one is either common or on \
+the list. Replace any that isn't with a common word or a simpler way of saying it. Getting this \
+right first time matters more than a clever text.
+- A dialogue is natural, everyday spoken Spanish between two speakers, A and B. In "roles", say \
+who A and B are in this situation, in one to three English words each, like "Waiter" and \
+"Customer".
+- A story is told by a narrator: every line's speaker is N, each line is one or two simple \
+sentences, and the story has a beginning, something that happens, and an end. Leave both roles \
+empty.
+- In each line's text, put | between words instead of spaces, keep punctuation on its word, and \
+wrap each stretch word or phrase in asterisks every time it appears, like \
+¿Lograron|*mantener|a|raya*|al|enemigo? A stretch word can be inflected (*mantuvimos|a|raya*).
+- Give "english", a natural English translation of each line.
+- In "glosses", give a short English gloss for each stretch word and for every word you used that \
+is neither common nor on the list.
+
+The learner's flashcard words, one per line as: word | meaning | M (well known) or Y (still being \
+learned)
+"""
+
+_PROMPTS: dict[Code, str] = {"th": _INSTRUCTIONS, "es": _SPANISH_INSTRUCTIONS}
+
+
+def system_prompt(entries: list[Entry], language: Code = "th") -> str:
     """The stable, cached part of every request. Sorted by note id so it's byte-identical between
     calls on the same snapshot; anything that varies goes in the user message instead."""
     known = sorted((e for e in entries if e.tier != "unreviewed"), key=lambda e: e.note_id)
     words = "\n".join(
         f"{e.text} | {e.meaning} | {'M' if e.tier == 'mature' else 'Y'}" for e in known
     )
-    return _INSTRUCTIONS + words
+    return _PROMPTS[language] + words
 
 
 def request_message(request: TextRequest) -> str:
@@ -201,7 +239,9 @@ def request_message(request: TextRequest) -> str:
     parts = [
         f"Topic: {request.topic}",
         f"Write {what} of {request.lines} lines.",
-        f"Coverage target: at least {request.floor:.0%} of words from the list.",
+        f"Coverage target: at least {request.floor:.0%} of words from the list."
+        if request.language == "th"
+        else f"Coverage target: at least {request.floor:.0%} of words common or from the list.",
     ]
     listed = "\n".join(f"- {e.text} ({e.meaning})" for e in request.stretch)
     if request.choose is not None:
@@ -241,7 +281,7 @@ def revision_message(coverage: Coverage, stretch_problems: list[str], floor: flo
     return " ".join(parts)
 
 
-async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generated:
+async def generate(ask: Ask, lexicon: Checker, request: TextRequest) -> Generated:
     messages: list[dict[str, Any]] = [{"role": "user", "content": request_message(request)}]
     result: Generated | None = None
     best: Generated | None = None  # the attempt with the highest coverage, the later one on a tie
@@ -277,7 +317,7 @@ async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generate
 
 
 def _assess(
-    draft: dict[str, Any], lexicon: Lexicon, request: TextRequest, attempt: int
+    draft: dict[str, Any], lexicon: Checker, request: TextRequest, attempt: int
 ) -> tuple[Generated, list[str]]:
     try:
         lines = tuple(Line(ln["speaker"], ln["text"], ln["english"]) for ln in draft["lines"])
@@ -290,7 +330,7 @@ def _assess(
         raise GenerationFailed("The draft has no lines")
 
     coverage = check([ln.text for ln in lines], lexicon)
-    used, problems = _stretch_used(coverage, request)
+    used, problems = _stretch_used(coverage, request, lexicon)
     # Stretch words are glossed from the deck, so only off-list words need the model's gloss.
     for word in used:
         glosses.setdefault(word.text, word.meaning)
@@ -305,13 +345,16 @@ def _assess(
     return generated, problems
 
 
-def _stretch_used(coverage: Coverage, request: TextRequest) -> tuple[list[Entry], list[str]]:
+def _stretch_used(
+    coverage: Coverage, request: TextRequest, lexicon: Checker
+) -> tuple[list[Entry], list[str]]:
     """The stretch words the draft uses, and what's wrong with how it uses them, as sentences for
     the revision message. A chosen word is one of the offered words the draft put in asterisks."""
     if request.choose is None:
         used = list(request.stretch)
     else:
-        marked = set(coverage.stretch_words)
+        # A marked word counts as the entry it's a form of: mantuvimos a raya as mantener a raya.
+        marked = {lexicon.entry_of(w) or w for w in coverage.stretch_words}
         used = [e for e in request.stretch if e.text in marked]
     problems = []
     if request.choose is not None and not used:
@@ -324,15 +367,24 @@ def _stretch_used(coverage: Coverage, request: TextRequest) -> tuple[list[Entry]
             + ", ".join(e.text for e in used)
             + "."
         )
-    uses = {e.text: sum(1 for t in coverage.tokens if t.text == e.text) for e in used}
+    uses = {
+        e.text: sum(1 for t in coverage.tokens if (lexicon.entry_of(t.text) or t.text) == e.text)
+        for e in used
+    }
     if short := [word for word, n in uses.items() if n < STRETCH_MIN_USES]:
         problems.append("These stretch words appear fewer than 2 times: " + ", ".join(short) + ".")
     return used, problems
 
 
-def claude_ask(client: anthropic.AsyncAnthropic, entries: list[Entry]) -> Ask:
+def claude_ask(
+    client: anthropic.AsyncAnthropic, entries: list[Entry], language: Code = "th"
+) -> Ask:
     system: list[BetaTextBlockParam] = [
-        {"type": "text", "text": system_prompt(entries), "cache_control": {"type": "ephemeral"}}
+        {
+            "type": "text",
+            "text": system_prompt(entries, language),
+            "cache_control": {"type": "ephemeral"},
+        }
     ]
     output_config: BetaOutputConfigParam = {
         "effort": EFFORT,

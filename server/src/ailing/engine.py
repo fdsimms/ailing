@@ -23,10 +23,11 @@ from pathlib import Path
 from typing import Literal
 
 from ailing import store
-from ailing.coverage import Lexicon, parse_line
+from ailing.coverage import Checker, parse_line
 from ailing.difficulty import Difficulty, adapt
 from ailing.gateway import CallTool
 from ailing.generator import Ask, GenerationFailed, TextRequest, generate
+from ailing.languages import LANGUAGES, Code
 from ailing.lexicon import Entry, lexicon_from
 from ailing.store import Reading, StoredText, Topic
 from ailing.stretch import pick_stretch
@@ -62,11 +63,14 @@ class _Failure:
     reported: bool = False
 
 
+_Key = tuple[int, Code]  # a topic and a language
+
+
 class Engine:
     def __init__(
         self,
         conn: sqlite3.Connection,
-        ask_for: Callable[[list[Entry]], Ask] | None,
+        ask_for: Callable[[list[Entry], Code], Ask] | None,
         call_tool: CallTool | None,
         clock: Callable[[], datetime] = datetime.now,
         rng: random.Random | None = None,
@@ -82,112 +86,126 @@ class Engine:
         self.synthesize = synthesize
         self.audio = audio
         self.voices = voices or DEFAULT_VOICES
-        self._topic_locks: dict[int, asyncio.Lock] = {}
+        # All by topic and language: a topic can be writing in one language and failed in another.
+        self._topic_locks: dict[_Key, asyncio.Lock] = {}
         self._topping_up = asyncio.Lock()
-        self._writing: set[int] = set()
-        self._failures: dict[int, _Failure] = {}
+        self._writing: set[_Key] = set()
+        self._failures: dict[_Key, _Failure] = {}
         self._tasks: set[asyncio.Task[None]] = set()
 
     # ==== Lexicon ====
 
-    def snapshot(self) -> tuple[list[Entry], Lexicon]:
-        """The current entries and their lexicon (cached by `lexicon_from`)."""
-        entries = store.load_snapshot(self.conn)[0]
-        return entries, lexicon_from(entries)
+    def language(self) -> Code:
+        """The language new texts are written and served in (a setting)."""
+        return store.load_settings(self.conn).language
 
-    def entries(self) -> list[Entry]:
-        return self.snapshot()[0]
+    def snapshot(self, language: Code | None = None) -> tuple[list[Entry], Checker]:
+        """A language's entries and its checker (cached by `lexicon_from`)."""
+        language = language or self.language()
+        entries = store.load_snapshot(self.conn, language)[0]
+        return entries, lexicon_from(entries, language)
 
-    async def refresh_lexicon(self) -> None:
+    def entries(self, language: Code | None = None) -> list[Entry]:
+        return self.snapshot(language)[0]
+
+    async def refresh_lexicon(self, language: Code | None = None) -> None:
         if self.call_tool is not None:
-            await store.refresh_if_stale(self.conn, self.call_tool, self.clock())
+            language = language or self.language()
+            await store.refresh_if_stale(self.conn, self.call_tool, self.clock(), language)
 
     # ==== Serving ====
 
-    def topic_state(self, topic: Topic) -> TopicState:
+    def topic_state(self, topic: Topic, language: Code | None = None) -> TopicState:
+        """`topic` is as listed for this language, so its ready count is this language's."""
+        key = (topic.id, language or self.language())
         if topic.ready > 0:
             return "ready"
-        if topic.id in self._writing:
+        if key in self._writing:
             return "writing"
-        if self._cooling_down(topic.id):
+        if self._cooling_down(key):
             return "failed"
         return "idle"
 
     async def next_text(self, topic_id: int) -> StoredText | None:
-        """A ready text, or None while one is being written in the background (started here if
-        nothing is writing). A failed write is raised once as NotAvailable; asking again after that
-        is a deliberate retry and starts a new write."""
-        if store.get_topic(self.conn, topic_id) is None:
+        """A ready text in the current language, or None while one is being written in the
+        background (started here if nothing is writing). A failed write is raised once as
+        NotAvailable; asking again after that is a deliberate retry and starts a new write."""
+        language = self.language()
+        key = (topic_id, language)
+        if store.get_topic(self.conn, topic_id, language) is None:
             raise NotFound(topic_id)
-        ready = store.next_ready_text(self.conn, topic_id)
+        ready = store.next_ready_text(self.conn, topic_id, language)
         if ready is not None:
             return ready
-        if topic_id in self._writing:
+        if key in self._writing:
             return None
-        failure = self._failures.get(topic_id)
+        failure = self._failures.get(key)
         if failure is not None and not failure.reported:
             failure.reported = True
             raise NotAvailable(failure.message)
-        self._check_setup()
-        self._failures.pop(topic_id, None)
-        self._start(topic_id)
+        self._check_setup(language)
+        self._failures.pop(key, None)
+        self._start(key)
         return None
 
-    def _check_setup(self) -> None:
+    def _check_setup(self, language: Code) -> None:
         if self.ask_for is None:
             raise NotAvailable("The server has no Claude API key yet.")
-        if not store.load_snapshot(self.conn)[0]:
-            raise NotAvailable("The server has no word list from Anki yet.")
+        if not store.load_snapshot(self.conn, language)[0]:
+            name = LANGUAGES[language].name
+            raise NotAvailable(f"The server has no {name} word list from Anki yet.")
 
-    def _start(self, topic_id: int) -> None:
-        self._writing.add(topic_id)  # before the task runs, so a second request sees it
-        task = asyncio.create_task(self._write(topic_id))
+    def _start(self, key: _Key) -> None:
+        self._writing.add(key)  # before the task runs, so a second request sees it
+        task = asyncio.create_task(self._write(key))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _write(self, topic_id: int) -> None:
+    async def _write(self, key: _Key) -> None:
         """Writes one text and records how it went. Never raises: this runs unattended."""
-        self._writing.add(topic_id)
+        topic_id, language = key
+        self._writing.add(key)
         try:
-            if await self.make_text(topic_id) is None:
-                self._fail(topic_id, MISSED_FLOOR)
+            if await self.make_text(topic_id, language) is None:
+                self._fail(key, MISSED_FLOOR)
         except NotAvailable as e:
-            self._fail(topic_id, str(e))
+            self._fail(key, str(e))
         except GenerationFailed as e:
-            self._fail(topic_id, f"Couldn't write a text: {e}")
+            self._fail(key, f"Couldn't write a text: {e}")
         except Exception:
-            log.exception("Writing a text for topic %d failed", topic_id)
-            self._fail(topic_id, "Something went wrong writing a text. Try again.")
+            log.exception("Writing a %s text for topic %d failed", language, topic_id)
+            self._fail(key, "Something went wrong writing a text. Try again.")
         finally:
-            self._writing.discard(topic_id)
+            self._writing.discard(key)
 
-    def _fail(self, topic_id: int, message: str) -> None:
-        self._failures[topic_id] = _Failure(self.clock(), message)
+    def _fail(self, key: _Key, message: str) -> None:
+        self._failures[key] = _Failure(self.clock(), message)
 
-    def _cooling_down(self, topic_id: int) -> bool:
-        failure = self._failures.get(topic_id)
+    def _cooling_down(self, key: _Key) -> bool:
+        failure = self._failures.get(key)
         return failure is not None and self.clock() - failure.at < FAILURE_COOLDOWN
 
     # ==== Writing ====
 
-    async def make_text(self, topic_id: int) -> StoredText | None:
-        """Generates and stores one text, or returns None when three attempts all missed the
-        coverage floor. One generation per topic at a time; a caller that waited on the lock gets
-        the text the one before it just wrote instead of writing another."""
-        lock = self._topic_locks.setdefault(topic_id, asyncio.Lock())
+    async def make_text(self, topic_id: int, language: Code | None = None) -> StoredText | None:
+        """Generates and stores one text, or returns None when every attempt was too far under
+        the floor to show. One generation per topic and language at a time; a caller that waited
+        on the lock gets the text the one before it just wrote instead of writing another."""
+        language = language or self.language()
+        lock = self._topic_locks.setdefault((topic_id, language), asyncio.Lock())
         async with lock:
-            ready = store.next_ready_text(self.conn, topic_id)
+            ready = store.next_ready_text(self.conn, topic_id, language)
             if ready is not None:
                 return ready
-            topic = store.get_topic(self.conn, topic_id)
+            topic = store.get_topic(self.conn, topic_id, language)
             if topic is None:
                 raise NotFound(topic_id)
-            self._check_setup()
+            self._check_setup(language)
             assert self.ask_for is not None
-            entries, lexicon = self.snapshot()
-            difficulty = store.load_difficulty(self.conn)
-            request = self._request(topic.name, entries, difficulty)
-            result = await generate(self.ask_for(entries), lexicon, request)
+            entries, lexicon = self.snapshot(language)
+            difficulty = store.load_difficulty(self.conn, language)
+            request = self._request(topic.name, entries, difficulty, language)
+            result = await generate(self.ask_for(entries, language), lexicon, request)
             words = list(result.stretch)
             if not result.passed:
                 # Stored as dropped, never served, so its cost is still on record.
@@ -200,9 +218,11 @@ class Engine:
                     self.clock(),
                     "dropped",
                     request.form,
+                    language,
                 )
                 log.warning(
-                    "Dropped a %r text at %.1f%% after %d attempts ($%.4f)",
+                    "Dropped a %s %r text at %.1f%% after %d attempts ($%.4f)",
+                    language,
                     topic.name,
                     result.coverage.ratio * 100,
                     result.attempts,
@@ -211,7 +231,8 @@ class Engine:
                 return None
             if not result.floor_met:
                 log.info(
-                    "Kept a %r text under the floor at %.1f%%, the closest of %d attempts",
+                    "Kept a %s %r text under the floor at %.1f%%, the closest of %d attempts",
+                    language,
                     topic.name,
                     result.coverage.ratio * 100,
                     result.attempts,
@@ -226,6 +247,7 @@ class Engine:
                 self.clock(),
                 "pending",
                 request.form,
+                language,
             )
             text = store.get_text(self.conn, text_id)
             assert text is not None
@@ -233,20 +255,33 @@ class Engine:
             store.mark_ready(self.conn, text_id)
             return text
 
-    def _request(self, topic: str, entries: list[Entry], difficulty: Difficulty) -> TextRequest:
+    def _request(
+        self,
+        topic: str,
+        entries: list[Entry],
+        difficulty: Difficulty,
+        language: Code | None = None,
+    ) -> TextRequest:
+        language = language or self.language()
         settings = store.load_settings(self.conn)
         start_of_today = self.clock().replace(hour=0, minute=0, second=0, microsecond=0)
-        practiced = store.practiced_days(self.conn, start_of_today)
-        floor, lines, form = difficulty.floor, settings.lines, settings.form
+        practiced = store.practiced_days(self.conn, start_of_today, language)
+
+        def request(stretch: list[Entry], choose: int | None = None) -> TextRequest:
+            return TextRequest(
+                topic,
+                tuple(stretch),
+                lines=settings.lines,
+                floor=difficulty.floor,
+                choose=choose,
+                form=settings.form,
+                language=language,
+            )
+
         if settings.stretch_words == "any":
-            stretch = pick_stretch(entries, difficulty.stretch, self.rng, practiced)
-            return TextRequest(topic, tuple(stretch), lines=lines, floor=floor, form=form)
+            return request(pick_stretch(entries, difficulty.stretch, self.rng, practiced))
         choices = pick_stretch(entries, STRETCH_CHOICES, self.rng, practiced)
-        if not choices:
-            return TextRequest(topic, lines=lines, floor=floor, form=form)
-        return TextRequest(
-            topic, tuple(choices), lines=lines, floor=floor, choose=difficulty.stretch, form=form
-        )
+        return request(choices, difficulty.stretch) if choices else request([])
 
     # ==== Audio ====
 
@@ -259,6 +294,10 @@ class Engine:
         for i in range(len(text.lines)):
             await self.line_audio(text, i)
 
+    def voices_for(self, language: Code) -> dict[str, str]:
+        # Thai's can be overridden from the environment (config.py); Spanish uses its defaults.
+        return self.voices if language == "th" else LANGUAGES[language].voices
+
     async def line_audio(self, text: StoredText, line: int) -> Path | None:
         """The cached MP3 for one line, made now if it's missing and text to speech is set up."""
         if self.audio is None or not 0 <= line < len(text.lines):
@@ -267,8 +306,9 @@ class Engine:
             return self.audio.path(text.id, line)
         if self.synthesize is None:
             return None
-        spoken, _ = parse_line(text.lines[line].text)
-        voice = self.voices.get(text.lines[line].speaker, self.voices["A"])
+        spoken, _ = parse_line(text.lines[line].text, LANGUAGES[text.language].spaced)
+        voices = self.voices_for(text.language)
+        voice = voices.get(text.lines[line].speaker, voices["A"])
         try:
             mp3 = await self.synthesize(spoken, voice)
         except TtsFailed as e:
@@ -280,34 +320,40 @@ class Engine:
     # ==== Top-up and readings ====
 
     async def top_up(self) -> None:
-        """Refreshes the lexicon if it's a day old, then makes sure each favorite topic has a ready
-        text. Runs after a response is sent; a second call while one is running does nothing. A
-        topic that failed recently is skipped; a missing key or word list stops the whole pass."""
+        """Refreshes the current language's lexicon if it's a day old, then makes sure each
+        favorite topic has a ready text in that language. Only the current language is topped up,
+        so having two doesn't double the spending. Runs after a response is sent; a second call
+        while one is running does nothing. A topic that failed recently is skipped; a missing key
+        or word list stops the whole pass."""
         if self._topping_up.locked():
             return
         async with self._topping_up:
-            await self.refresh_lexicon()
+            language = self.language()
+            await self.refresh_lexicon(language)
             try:
-                self._check_setup()
+                self._check_setup(language)
             except NotAvailable as e:
                 log.info("Not topping up: %s", e)
                 return
-            for topic in store.list_topics(self.conn):
+            for topic in store.list_topics(self.conn, language):
+                key = (topic.id, language)
                 if not topic.favorite or topic.ready >= READY_PER_FAVORITE:
                     continue
-                if topic.id in self._writing or self._cooling_down(topic.id):
+                if key in self._writing or self._cooling_down(key):
                     continue
-                await self._write(topic.id)
+                await self._write(key)
 
     def record_reading(self, text_id: int, reading: Reading) -> None:
-        """Logs a session and adjusts difficulty. A second reading of a text that's already been
-        read is ignored, so a retried request can't log twice or move difficulty twice."""
+        """Logs a session and adjusts the difficulty of the text's language. A second reading of a
+        text that's already been read is ignored, so a retried request can't log twice or move
+        difficulty twice."""
         status = store.text_status(self.conn, text_id)
         if status is None:
             raise NotFound(text_id)
         if status == "read":
             return
         store.log_reading(self.conn, text_id, reading, self.clock())
-        if reading.rating is not None:
-            current = store.load_difficulty(self.conn)
-            store.save_difficulty(self.conn, adapt(current, reading.rating))
+        text = store.get_text(self.conn, text_id)
+        if reading.rating is not None and text is not None:
+            current = store.load_difficulty(self.conn, text.language)
+            store.save_difficulty(self.conn, adapt(current, reading.rating), text.language)

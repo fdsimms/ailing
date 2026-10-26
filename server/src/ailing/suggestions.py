@@ -1,15 +1,17 @@
 """Topic ideas, so a topic doesn't have to be thought up from nothing. The owner still picks
 (docs/brief.md, design principle 10); these are only offered.
 
-Each idea is an everyday situation with a handful of Thai words it's likely to need. Ideas are
-ordered by how many of those words the deck already knows, so the ones most likely to clear the
-coverage floor on the first try come first. Ideas already added as topics (or added and removed)
-aren't offered again.
+Each idea is an everyday situation with a handful of Thai words it's likely to need. For Thai,
+ideas are ordered by how many of those words the deck already knows, so the ones most likely to
+clear the coverage floor on the first try come first. Spanish counts the 10,000 most common words as
+known, so everyday words fit every idea equally and Spanish keeps the order below. Ideas already
+added as topics (or added and removed) aren't offered again; topics are shared by both languages.
 """
 
 from dataclasses import dataclass
 
-from ailing.coverage import Lexicon
+from ailing.coverage import Checker
+from ailing.languages import Code
 
 
 @dataclass(frozen=True)
@@ -58,18 +60,17 @@ class Suggestion:
     fit: float  # the share of the idea's words the deck knows
 
 
-def suggest(lexicon: Lexicon, taken: set[str]) -> list[Suggestion]:
+def suggest(lexicon: Checker, taken: set[str], language: Code = "th") -> list[Suggestion]:
     """Ideas not already taken (names compared ignoring case), best fit first; ties keep the order
     above."""
     taken = {name.casefold() for name in taken}
-    scored = [
-        Suggestion(idea.name, _fit(idea, lexicon))
-        for idea in IDEAS
-        if idea.name.casefold() not in taken
-    ]
+    ideas = [idea for idea in IDEAS if idea.name.casefold() not in taken]
+    if language != "th":
+        return [Suggestion(idea.name, 1.0) for idea in ideas]
+    scored = [Suggestion(idea.name, _fit(idea, lexicon)) for idea in ideas]
     return sorted(scored, key=lambda s: -s.fit)
 
 
-def _fit(idea: Idea, lexicon: Lexicon) -> float:
+def _fit(idea: Idea, lexicon: Checker) -> float:
     known = sum(1 for word in idea.words if lexicon.status(word) == "known")
     return round(known / len(idea.words), 2)
