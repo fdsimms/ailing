@@ -4,6 +4,7 @@ setting and the owner's settings. Only the latest lexicon snapshot is kept (docs
 import json
 import logging
 import sqlite3
+import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -72,6 +73,10 @@ CREATE TABLE IF NOT EXISTS readings (
     listen_only INTEGER NOT NULL,
     seconds INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cleared_words (
+    word TEXT PRIMARY KEY,
+    cleared_at TEXT NOT NULL
+);
 """
 
 
@@ -125,6 +130,9 @@ def connect(path: Path | str) -> sqlite3.Connection:
     if "roles" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
         # Texts written before speakers had roles have none, and show only A and B.
         conn.execute("ALTER TABLE texts ADD COLUMN roles TEXT NOT NULL DEFAULT '{}'")
+    if "removed" not in {r[1] for r in conn.execute("PRAGMA table_info(topics)")}:
+        # A removed topic is hidden, not deleted, since its texts and readings point at it.
+        conn.execute("ALTER TABLE topics ADD COLUMN removed INTEGER NOT NULL DEFAULT 0")
     with conn:
         # A text left pending by a restart mid-audio: its missing lines are made on request.
         conn.execute("UPDATE texts SET status = 'ready' WHERE status = 'pending'")
@@ -180,7 +188,8 @@ async def refresh_if_stale(conn: sqlite3.Connection, call: CallTool, now: dateti
 
 
 def add_topic(conn: sqlite3.Connection, name: str, favorite: bool, now: datetime) -> Topic:
-    """Adds a topic, or returns the existing one with that name (ignoring case)."""
+    """Adds a topic, or returns the existing one with that name (ignoring case). A removed topic
+    with that name comes back, with any text it still had ready."""
     name = " ".join(name.split())
     if not name:
         raise ValueError("A topic needs a name")
@@ -188,6 +197,10 @@ def add_topic(conn: sqlite3.Connection, name: str, favorite: bool, now: datetime
         conn.execute(
             "INSERT OR IGNORE INTO topics (name, favorite, created_at) VALUES (?, ?, ?)",
             (name, int(favorite), now.isoformat()),
+        )
+        conn.execute(
+            "UPDATE topics SET removed = 0, favorite = ? WHERE name = ? AND removed = 1",
+            (int(favorite), name),
         )
     row = conn.execute("SELECT id FROM topics WHERE name = ?", (name,)).fetchone()
     topic = get_topic(conn, row[0])
@@ -203,15 +216,26 @@ def list_topics(conn: sqlite3.Connection) -> list[Topic]:
     rows = conn.execute(
         """SELECT t.id, t.name, t.favorite,
                   (SELECT COUNT(*) FROM texts x WHERE x.topic_id = t.id AND x.status = 'ready')
-           FROM topics t ORDER BY t.favorite DESC, t.name"""
+           FROM topics t WHERE t.removed = 0 ORDER BY t.favorite DESC, t.name"""
     )
     return [Topic(i, name, bool(fav), ready) for i, name, fav, ready in rows]
 
 
 def set_favorite(conn: sqlite3.Connection, topic_id: int, favorite: bool) -> Topic | None:
     with conn:
-        conn.execute("UPDATE topics SET favorite = ? WHERE id = ?", (int(favorite), topic_id))
+        conn.execute(
+            "UPDATE topics SET favorite = ? WHERE id = ? AND removed = 0", (int(favorite), topic_id)
+        )
     return get_topic(conn, topic_id)
+
+
+def remove_topic(conn: sqlite3.Connection, topic_id: int) -> bool:
+    """Hides a topic from the list and the background top-up. Returns whether there was one."""
+    with conn:
+        cur = conn.execute(
+            "UPDATE topics SET removed = 1 WHERE id = ? AND removed = 0", (topic_id,)
+        )
+    return cur.rowcount > 0
 
 
 # ==== Texts ====
@@ -327,6 +351,70 @@ def log_reading(conn: sqlite3.Connection, text_id: int, reading: Reading, now: d
             ),
         )
         conn.execute("UPDATE texts SET status = 'read' WHERE id = ?", (text_id,))
+
+
+@dataclass(frozen=True)
+class Progress:
+    """Finished readings since a date: what the Milestone 1 exit check reads (docs/brief.md)."""
+
+    finished: int
+    median_coverage: float | None
+    ratings: dict[str, int]  # too_easy, about_right, too_hard, and none for unrated
+
+
+def progress(conn: sqlite3.Connection, since: datetime) -> Progress:
+    rows = conn.execute(
+        """SELECT x.coverage, r.rating FROM readings r JOIN texts x ON x.id = r.text_id
+           WHERE r.finished = 1 AND r.logged_at >= ?""",
+        (since.isoformat(),),
+    ).fetchall()
+    ratings = {"too_easy": 0, "about_right": 0, "too_hard": 0, "none": 0}
+    for _, rating in rows:
+        ratings[rating or "none"] += 1
+    coverages = [coverage for coverage, _ in rows]
+    median = statistics.median(coverages) if coverages else None
+    return Progress(len(rows), median, ratings)
+
+
+# ==== Marked words ====
+
+
+@dataclass(frozen=True)
+class MarkedWord:
+    word: str
+    times: int  # readings it was marked in since it was last cleared
+    last_marked: datetime
+    glosses: dict[str, str]  # the glosses of the last text it was marked in
+
+
+def marked_words(conn: sqlite3.Connection) -> list[MarkedWord]:
+    """Every word marked unknown in a reading and not cleared since, most recently marked first."""
+    cleared = {
+        word: datetime.fromisoformat(at)
+        for word, at in conn.execute("SELECT word, cleared_at FROM cleared_words")
+    }
+    rows = conn.execute(
+        """SELECT r.logged_at, r.words_flagged, x.glosses FROM readings r
+           JOIN texts x ON x.id = r.text_id ORDER BY r.id"""
+    )
+    found: dict[str, MarkedWord] = {}
+    for logged_at, flagged, glosses in rows:
+        at = datetime.fromisoformat(logged_at)
+        for word in json.loads(flagged):
+            if word in cleared and at <= cleared[word]:
+                continue
+            times = found[word].times + 1 if word in found else 1
+            found[word] = MarkedWord(word, times, at, json.loads(glosses))
+    return sorted(found.values(), key=lambda w: w.last_marked, reverse=True)
+
+
+def clear_word(conn: sqlite3.Connection, word: str, now: datetime) -> None:
+    """Takes a word off the marked list until it's marked again."""
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO cleared_words (word, cleared_at) VALUES (?, ?)",
+            (word, now.isoformat()),
+        )
 
 
 # ==== Difficulty ====

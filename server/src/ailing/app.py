@@ -5,16 +5,22 @@
     GET   /api/topics                 topics with their state and ready count; tops up in the background
     POST  /api/topics                 {name, favorite?} adds a topic (or returns the existing one)
     PATCH /api/topics/{id}            {favorite}
+    DELETE /api/topics/{id}           removes a topic from the list (adding it again brings it back)
     POST  /api/topics/{id}/next       the next text for a topic; 202 {"writing": true} while one is
                                       being written in the background, so ask again shortly
     GET   /api/settings               {stretch_words: "topic" | "any"}
     PATCH /api/settings               the same fields; takes effect from the next text written
     POST  /api/texts/{id}/reading     logs a session with a text and adjusts difficulty
+    GET   /api/progress               finished texts, coverage and ratings over the last 14 days,
+                                      and the difficulty the next text is written at
+    GET   /api/words                  words marked unknown and not cleared, newest first
+    POST  /api/words/clear            {word} takes a word off that list until it's marked again
     GET   /api/texts/{id}/lines/{n}/audio   one line's MP3, made now if it isn't cached yet
 """
 
 import hmac
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Annotated, Any, Literal
 
 import anthropic
@@ -28,9 +34,12 @@ from ailing.ankimcp import ankimcp_call_tool
 from ailing.engine import Engine, NotAvailable, NotFound
 from ailing.generator import Ask, claude_ask
 from ailing.lexicon import Entry
-from ailing.reader import render
+from ailing.reader import gloss_for, render
 from ailing.store import Reading, Settings, StretchWords, Topic
 from ailing.tts import AudioCache, azure_synthesize
+
+# The window the progress summary covers: the Milestone 1 exit check's two weeks.
+PROGRESS_DAYS = 14
 
 
 class NewTopic(BaseModel):
@@ -40,6 +49,10 @@ class NewTopic(BaseModel):
 
 class TopicUpdate(BaseModel):
     favorite: bool
+
+
+class ClearWord(BaseModel):
+    word: str = Field(min_length=1, max_length=100)
 
 
 class SettingsUpdate(BaseModel):
@@ -99,6 +112,12 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
             raise HTTPException(404, "No such topic.")
         return _topic(topic, engine)
 
+    @app.delete("/api/topics/{topic_id}", status_code=204, dependencies=authed)
+    async def remove_topic(topic_id: int) -> Response:
+        if not store.remove_topic(engine.conn, topic_id):
+            raise HTTPException(404, "No such topic.")
+        return Response(status_code=204)
+
     @app.post("/api/topics/{topic_id}/next", dependencies=authed)
     async def next_text(topic_id: int, background: BackgroundTasks) -> Any:
         try:
@@ -156,6 +175,38 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         except NotFound as e:
             raise HTTPException(404, "No such text.") from e
         background.add_task(engine.top_up)
+        return Response(status_code=204)
+
+    @app.get("/api/progress", dependencies=authed)
+    async def progress() -> dict[str, Any]:
+        done = store.progress(engine.conn, engine.clock() - timedelta(days=PROGRESS_DAYS))
+        difficulty = store.load_difficulty(engine.conn)
+        return {
+            "days": PROGRESS_DAYS,
+            "finished": done.finished,
+            "median_coverage": done.median_coverage,
+            "ratings": done.ratings,
+            "next": {"floor": difficulty.floor, "stretch": difficulty.stretch},
+        }
+
+    @app.get("/api/words", dependencies=authed)
+    async def words() -> list[dict[str, Any]]:
+        entries, lexicon = engine.snapshot()
+        meanings = {e.text: e.meaning for e in entries}
+        return [
+            {
+                "word": w.word,
+                "gloss": gloss_for(w.word, w.glosses, lexicon, meanings),
+                "status": lexicon.status(w.word),
+                "times": w.times,
+                "last_marked": w.last_marked.isoformat(),
+            }
+            for w in store.marked_words(engine.conn)
+        ]
+
+    @app.post("/api/words/clear", status_code=204, dependencies=authed)
+    async def clear_word(body: ClearWord) -> Response:
+        store.clear_word(engine.conn, body.word, engine.clock())
         return Response(status_code=204)
 
     return app

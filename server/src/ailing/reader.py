@@ -8,15 +8,20 @@ from ailing.coverage import Lexicon, is_word, parse_line
 from ailing.store import StoredText
 
 
+def gloss_for(
+    word: str, glosses: dict[str, str], lexicon: Lexicon, meanings: dict[str, str]
+) -> str | None:
+    """The text's own gloss, else the deck's meaning, else the meanings of the deck entries a
+    known compound splits into (a word known that way has no entry of its own to gloss it)."""
+    if gloss := glosses.get(word) or meanings.get(word):
+        return gloss
+    pieces = lexicon.known_pieces(word)
+    parts = [meanings[p] for p in pieces or [] if p in meanings]
+    return " + ".join(parts) if pieces and len(parts) == len(pieces) else None
+
+
 def render(text: StoredText, lexicon: Lexicon, meanings: dict[str, str]) -> dict[str, Any]:
     stretch = set(text.stretch)
-
-    def _compound(word: str) -> str | None:
-        # A word known because it splits into deck entries has no entry of its own to gloss it.
-        pieces = lexicon.known_pieces(word)
-        glosses = [meanings[p] for p in pieces or [] if p in meanings]
-        return " + ".join(glosses) if pieces and len(glosses) == len(pieces) else None
-
     lines = []
     for line in text.lines:
         plain, _ = parse_line(line.text)
@@ -29,7 +34,7 @@ def render(text: StoredText, lexicon: Lexicon, meanings: dict[str, str]) -> dict
                 {
                     "text": piece,
                     "status": lexicon.status(piece),
-                    "gloss": text.glosses.get(piece) or meanings.get(piece) or _compound(piece),
+                    "gloss": gloss_for(piece, text.glosses, lexicon, meanings),
                     "stretch": piece in stretch,
                 }
             )

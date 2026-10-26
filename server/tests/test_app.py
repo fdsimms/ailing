@@ -249,3 +249,62 @@ def test_the_stretch_setting_can_be_read_and_changed() -> None:
         c.patch("/api/settings", headers=AUTH, json={"stretch_words": "loose"}).status_code == 422
     )
     assert c.get("/api/settings").status_code == 401
+
+
+def test_a_removed_topic_leaves_the_list_and_comes_back_when_added_again() -> None:
+    c = client()
+    topic = c.post("/api/topics", json={"name": "Taxi", "favorite": False}, headers=AUTH).json()
+
+    assert c.delete(f"/api/topics/{topic['id']}", headers=AUTH).status_code == 204
+    assert c.get("/api/topics", headers=AUTH).json() == []
+    assert c.post(f"/api/topics/{topic['id']}/next", headers=AUTH).status_code == 404
+    assert c.delete(f"/api/topics/{topic['id']}", headers=AUTH).status_code == 404
+
+    again = c.post("/api/topics", json={"name": "taxi"}, headers=AUTH).json()
+    assert again["id"] == topic["id"]
+    assert again["favorite"] is True
+    assert [t["name"] for t in c.get("/api/topics", headers=AUTH).json()] == ["Taxi"]
+
+
+def read(c: TestClient, rating: str | None, flagged: list[str], finished: bool = True) -> None:
+    topic = c.post("/api/topics", json={"name": "Food stall"}, headers=AUTH).json()
+    text = next_text(c, topic["id"]).json()
+    body = {"rating": rating, "finished": finished, "words_flagged": flagged}
+    assert c.post(f"/api/texts/{text['id']}/reading", json=body, headers=AUTH).status_code == 204
+
+
+def test_progress_counts_finished_texts_and_says_how_hard_the_next_is() -> None:
+    c = client()
+    empty = c.get("/api/progress", headers=AUTH).json()
+    assert empty["finished"] == 0
+    assert empty["median_coverage"] is None
+    assert empty["next"] == {"floor": 0.95, "stretch": 2}
+
+    read(c, "about_right", [])
+    read(c, "too_hard", [])
+    read(c, None, [], finished=False)  # backed out of: not counted
+
+    progress = c.get("/api/progress", headers=AUTH).json()
+    assert progress["days"] == 14
+    assert progress["finished"] == 2
+    assert progress["median_coverage"] == 1.0
+    assert progress["ratings"] == {"too_easy": 0, "about_right": 1, "too_hard": 1, "none": 0}
+    assert progress["next"] == {"floor": 0.96, "stretch": 1}
+    assert c.get("/api/progress").status_code == 401
+
+
+def test_marked_words_are_listed_with_glosses_until_cleared() -> None:
+    c = client()
+    read(c, None, ["ครับ"])
+    read(c, None, ["ครับ", "ข้าวเหนียวมะม่วง"])
+
+    words = c.get("/api/words", headers=AUTH).json()
+    assert [(w["word"], w["times"], w["status"]) for w in words] == [
+        ("ครับ", 2, "known"),
+        ("ข้าวเหนียวมะม่วง", 1, "known"),
+    ]
+    assert words[0]["gloss"] == "polite particle (male)"
+
+    assert c.post("/api/words/clear", json={"word": "ครับ"}, headers=AUTH).status_code == 204
+    assert [w["word"] for w in c.get("/api/words", headers=AUTH).json()] == ["ข้าวเหนียวมะม่วง"]
+    assert c.get("/api/words").status_code == 401
