@@ -104,6 +104,10 @@ constraints.
 3. **What counts as known:** a word studied in a review card counts; a word that only appears inside
    a studied phrase (รับ inside รับอะไรดี) counts as partial and is treated as unknown for coverage.
    Weight word choice toward mature cards (interval of 21 days or more) using `cards_stats`.
+
+   > **Changed on 26 October 2026 by the owner, for Spanish.** The Spanish deck holds only advanced
+   > words, so Spanish also counts the 10,000 most common Spanish word families as known. Thai is
+   > unchanged. See `docs/architecture.md`, Languages.
 4. **1-3 stretch words per text, today's due or young words first.** Each appears 2-3 times in the
    text and comes back in later texts on later days. Repetition and spacing are both moderators of
    incidental learning.
@@ -221,6 +225,9 @@ Drill writes grades back only if the `rate_card` spike succeeds.
 **Milestone 3: mining and Spanish.** Tapped words become proposed Omnilanguage notes, approved one by
 one, then added with `add_notes` and given audio, under the daily cap. Then Spanish, which needs
 lemma matching for inflected forms.
+
+> **Changed on 26 October 2026 by the owner.** Spanish Read & Listen was built early, before the
+> Milestone 1 exit check; mining wasn't. See `docs/architecture.md`, Languages.
 
 **Out of scope for milestone 1:** grade write-back, adding anything to Anki, languages other than
 Thai, offline mode, and any reimplementation of FSRS.

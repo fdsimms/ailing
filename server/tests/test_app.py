@@ -319,6 +319,7 @@ def test_marked_words_are_listed_with_glosses_until_cleared() -> None:
         ("ข้าวเหนียวมะม่วง", 1, "known"),
     ]
     assert words[0]["gloss"] == "polite particle (male)"
+    assert words[0]["deck"] is True
 
     assert c.post("/api/words/clear", json={"word": "ครับ"}, headers=AUTH).status_code == 204
     assert [w["word"] for w in c.get("/api/words", headers=AUTH).json()] == ["ข้าวเหนียวมะม่วง"]

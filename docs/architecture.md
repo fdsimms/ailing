@@ -96,6 +96,56 @@ brief disagree, this file is newer.
   unknown for coverage, and its gloss can point at the entry it came from.
 - Only the latest snapshot is kept. No history.
 
+## Languages
+
+Spanish was added on 26 October 2026, by the owner's decision, ahead of the Milestone 1 exit check
+and of Milestone 3 where the brief put it. Mining is still not built. Thai works as before.
+
+- **One setting, `language`** (`th` or `es`), picks the language new texts are written and served
+  in. It's a switch at the top of the topics screen. **Topics are shared**: a topic like "At a
+  coffee shop" has texts in each language. The lexicon snapshot, ready texts, difficulty, progress,
+  past texts, marked words, practiced stretch words and failures are per language. Only the current
+  language is topped up in the background, so a second language doesn't double the spending.
+  `server/src/ailing/languages.py` holds what differs: the deck, the query, the voices, and whether
+  words are written with spaces.
+- **The Spanish deck** is `👅 Languages::🌮 Español`, with the same Omnilanguage note type as Thai,
+  so the snapshot reads Entry and Meaning the same way. What it holds, checked against the real deck
+  on 26 October 2026: about 790 notes of advanced words and phrases (el blindaje, a quemarropa,
+  mantener a raya, cerciorarse), and no everyday words at all (casa, tener, de: none).
+- **What counts as known in Spanish** (owner's decision). Since the deck holds no everyday words,
+  the deck alone can't be the dictionary as it is for Thai: almost no text would reach 90%. A
+  Spanish word counts as known when its lemma is one of the **10,000 most common Spanish word
+  families** or a **reviewed deck entry**. The list (`server/src/ailing/data/es_common.txt`) was
+  built from wordfreq's 50,000 most common Spanish forms, each lemmatized with simplemma and its
+  frequency added to its lemma's, so a verb whose use is spread over many forms (sentar: sentamos,
+  sentó) still counts. Ranking single forms instead missed llover, sentar and disculpar. Everyday
+  dialogues measured 100% with it; a sentence of rare words (ornitorrinco, escabulló, estuario)
+  is flagged. `server/src/ailing/spanish.py` is the checker:
+  - Lemmas from simplemma (hablé, hablaríamos to hablar). It's loaded the first time Spanish is
+    used, about 100 MB: Thai alone peaks near 233 MB, both together near 334 MB, on the 512 MB
+    machine. If memory gets tight, the machine goes to 1 GB.
+  - Pronouns joined to a verb come off (dámelo to dar), a reflexive entry matches its forms
+    (cerciorarse matches cercioramos and cerciorándonos), and an entry's article is ignored
+    (el blindaje matches blindaje).
+  - A deck phrase is found by its lemmas and becomes one token, counted once, like a Thai compound:
+    mantuvimos a raya is known, as mantener a raya. A rare word only inside a deck phrase
+    (quemarropa, from a quemarropa) is partial, as in Thai.
+  - Words are written with spaces, so the model puts `|` where a space goes
+    (`¿Qué|quieres|*tomar*?`) and the server turns each back into a space. A stretch word can be
+    inflected, and counts as the entry it's a form of.
+- **The prompt** for Spanish says the learner knows the 10,000 most common words, that the list is
+  their advanced flashcard words, and to write Mexican Spanish (ustedes, never vosotros). Each
+  language has its own cached system prompt.
+- **Voices**: Mexican Spanish, `es-MX-JorgeNeural` (A, and the narrator) and `es-MX-DaliaNeural`
+  (B), as the owner chose. The speech request's language comes from the voice's name. Not tried
+  against Azure yet.
+- **In the app**, a word known for being common rather than from the deck says "A common word" in
+  its gloss, and the Spanish highlight switch is "Highlight words you might not know". Spanish is
+  set a little smaller than Thai.
+- **Topic ideas** are ranked by fit for Thai only: with 10,000 common words known, every idea fits
+  Spanish equally, so Spanish keeps the listed order.
+- The reading log names the language as before (`thai`, now also `spanish`).
+
 ## Generation and coverage
 
 - **The server re-segments every line.** The model's `|` breaks are not trusted for coverage: the

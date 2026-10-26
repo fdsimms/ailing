@@ -18,7 +18,9 @@ is optional and described in `docs/dundundun-tie-in.md`.
 
 **Milestone 1 only:** Thai Read & Listen end to end on a phone, then two weeks of real use before
 building anything else. Out of scope until the exit check passes: grade write-back, adding anything
-to Anki, languages other than Thai, offline mode, reimplementing FSRS, Drill and Situations.
+to Anki, languages other than Thai and Spanish, offline mode, reimplementing FSRS, Drill and
+Situations. Spanish Read & Listen was added on 26 October 2026 by the owner's decision
+(`docs/architecture.md`, Languages).
 
 ## Rules that must not be broken (from the brief's design principles)
 
@@ -33,7 +35,9 @@ to Anki, languages other than Thai, offline mode, reimplementing FSRS, Drill and
 - **Token format is a `|`-split string per line.** Nested JSON token arrays truncated responses.
 - **What counts as known:** a studied word counts; a word that appears only inside a studied phrase
   is "partial" and counts as unknown for coverage. The checker is lexicon-first (the lexicon is its
-  dictionary), not PyThaiNLP's default dictionary, which scored 71% on BEST 2010.
+  dictionary), not PyThaiNLP's default dictionary, which scored 71% on BEST 2010. Spanish also
+  counts the 10,000 most common Spanish word families as known, matched by lemma, because its deck
+  holds only advanced words (owner's decision; `docs/architecture.md`, Languages).
 - **1-3 stretch words per text**, today's due or young words first, English gloss on tap.
 - **Batch and cache.** Never one live API call per card or per page view.
 - **The owner picks the topic.**

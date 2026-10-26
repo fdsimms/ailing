@@ -245,6 +245,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
                 "word": w.word,
                 "gloss": gloss_for(w.word, w.glosses, lexicon, meanings),
                 "status": lexicon.status(w.word),
+                "deck": lexicon.entry_of(w.word) is not None,
                 "times": w.times,
                 "last_marked": w.last_marked.isoformat(),
             }

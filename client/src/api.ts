@@ -12,7 +12,11 @@ export type Word = {
   status: "known" | "partial" | "unknown" | null; // null for spaces and punctuation
   gloss: string | null;
   stretch: boolean;
+  deck: boolean; // a deck word, as against one known for being common (Spanish)
 };
+
+// The languages texts are written in. Topics are shared; the rest is per language.
+export type Language = "th" | "es";
 
 // A and B are a dialogue's two speakers; N is a story's narrator.
 export type TextLine = { speaker: "A" | "B" | "N"; english: string; words: Word[]; audio: boolean };
@@ -28,6 +32,7 @@ export type ReaderText = {
   stretch: string[];
   roles: Partial<Record<"A" | "B", string>>; // who each speaker is; empty for older texts and stories
   form: Form;
+  language: Language;
   lines: TextLine[];
 };
 
@@ -38,7 +43,7 @@ export type StretchWords = "topic" | "any";
 // How many lines a dialogue has: short, medium or long.
 export type Length = 6 | 8 | 12;
 
-export type Settings = { stretch_words: StretchWords; lines: Length; form: Form };
+export type Settings = { stretch_words: StretchWords; lines: Length; form: Form; language: Language };
 
 export type Rating = "too_easy" | "about_right" | "too_hard";
 
@@ -71,6 +76,7 @@ export type MarkedWord = {
   word: string;
   gloss: string | null;
   status: "known" | "partial" | "unknown";
+  deck: boolean;
   times: number;
   last_marked: string;
 };
