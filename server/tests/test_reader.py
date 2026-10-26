@@ -13,6 +13,7 @@ TEXT = StoredText(
     glosses={"ทอน": "give change"},
     stretch=("ข้าวเหนียวมะม่วง",),
     coverage=1.0,
+    roles={"A": "Vendor", "B": "Customer"},
 )
 MEANINGS = {e.text: e.meaning for e in ENTRIES}
 
@@ -30,6 +31,13 @@ def test_lines_are_split_by_the_server_with_status_and_gloss() -> None:
     }
     assert words[4] == {"text": "!", "status": None, "gloss": None, "stretch": False}
     assert out["lines"][0]["english"] == "I'd like mango sticky rice."
+
+
+def test_the_speakers_roles_are_sent_with_the_text() -> None:
+    assert render(TEXT, lexicon_from(ENTRIES), MEANINGS)["roles"] == {
+        "A": "Vendor",
+        "B": "Customer",
+    }
 
 
 def test_a_word_off_the_list_takes_the_models_gloss() -> None:

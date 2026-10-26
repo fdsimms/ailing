@@ -1,7 +1,7 @@
 import type { ReaderText } from "../api";
 import { formatDuration, heard, isFlagged, lookUp, startSession, toggleFlag, toLog } from "../session";
 
-const TEXT: ReaderText = { id: 7, topicId: 1, title: "t", coverage: 0.97, stretch: [], lines: [] };
+const TEXT: ReaderText = { id: 7, topicId: 1, title: "t", coverage: 0.97, stretch: [], roles: {}, lines: [] };
 
 test("looking a word up records it once", () => {
   let s = startSession(TEXT, 0);

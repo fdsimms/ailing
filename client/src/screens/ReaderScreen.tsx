@@ -49,7 +49,7 @@ import { countOutsideDeck, isOutsideDeck } from "../deckWords";
 import { firstLine, nextLine } from "../playback";
 import { RATES } from "../playbackRate";
 import { formatDuration, heard, isFlagged, lookUp, type Session, startSession, toLog, toggleFlag } from "../session";
-import { font, radius, spacing, thaiFont, useColors } from "../theme";
+import { type Colors, font, radius, spacing, thaiFont, useColors } from "../theme";
 
 type Tapped = { word: Word; x: number; y: number };
 
@@ -242,6 +242,18 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
               ))}
             </View>
           ) : null}
+          {text.roles.A || text.roles.B ? (
+            <View style={styles.roles}>
+              {(["A", "B"] as const).map((who) =>
+                text.roles[who] ? (
+                  <View key={who} style={styles.role}>
+                    <Text style={[styles.roleBadge, speakerColors(c, who)]}>{who}</Text>
+                    <Text style={[styles.roleName, { color: c.textSecondary }]}>{text.roles[who]}</Text>
+                  </View>
+                ) : null,
+              )}
+            </View>
+          ) : null}
           <View style={styles.toggle}>
             <Text style={[styles.toggleText, { color: c.textSecondary }]}>Show English</Text>
             <Switch
@@ -277,16 +289,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
                 current === i && { backgroundColor: c.card, marginHorizontal: 0, paddingHorizontal: spacing.md },
               ]}
             >
-              <Text
-                style={[
-                  styles.speaker,
-                  line.speaker === "A"
-                    ? { backgroundColor: c.accentSubtle, color: c.accentText }
-                    : { backgroundColor: c.speakerB, color: c.speakerBText },
-                ]}
-              >
-                {line.speaker}
-              </Text>
+              <Text style={[styles.speaker, speakerColors(c, line.speaker)]}>{line.speaker}</Text>
               <View style={styles.lineBody}>
                 <View style={styles.words}>
                   {line.words.map((word, j) => (
@@ -412,6 +415,12 @@ const RATINGS: { value: Rating; label: string; hint: string }[] = [
   { value: "about_right", label: "About right", hint: "Keep it like this" },
   { value: "too_hard", label: "Too hard", hint: "Fewer new words next time" },
 ];
+
+function speakerColors(c: Colors, who: "A" | "B") {
+  return who === "A"
+    ? { backgroundColor: c.accentSubtle, color: c.accentText }
+    : { backgroundColor: c.speakerB, color: c.speakerBText };
+}
 
 function glossFor(text: ReaderText, word: string): string | null {
   for (const line of text.lines) for (const w of line.words) if (w.text === word && w.gloss) return w.gloss;
@@ -635,6 +644,19 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.smd,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  roles: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+  role: { flexDirection: "row", alignItems: "center", gap: 6 },
+  roleBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    overflow: "hidden",
+    textAlign: "center",
+    lineHeight: 22,
+    fontSize: font.sm,
+    fontWeight: "700",
+  },
+  roleName: { fontSize: font.md },
   speaker: {
     width: 26,
     height: 26,

@@ -80,7 +80,7 @@ brief disagree, this file is newer.
 - **Model:** `claude-sonnet-5-5` at `medium` effort, with server-side refusal fallbacks
   (`fallbacks: "default"`). The owner chose Sonnet to start, at half Opus's price; revisit once real
   texts show whether its Thai holds up within the vocabulary. The reply is JSON held to a schema (`output_config.format`): a title,
-  lines (speaker, `|`-split text, English), and glosses for words off the list. Revisions are
+  roles (who A and B are, like Waiter and Customer, shown above the lines in the reader), lines (speaker, `|`-split text, English), and glosses for words off the list. Revisions are
   appended to the same conversation, never edited, so the model's earlier thinking stays valid.
   `server/src/ailing/generator.py`.
 - **A stretch word used fewer than 2 times** sends the text back too, even at full coverage.

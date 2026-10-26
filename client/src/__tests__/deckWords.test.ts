@@ -17,6 +17,7 @@ test("counts every occurrence across the lines", () => {
     title: "At the stall",
     coverage: 0.95,
     stretch: [],
+    roles: {},
     lines: [
       { speaker: "A", english: "", audio: false, words: [word("ทอน", "unknown"), word("ครับ", "known")] },
       { speaker: "B", english: "", audio: false, words: [word("ทอน", "unknown"), word("รับ", "partial")] },
