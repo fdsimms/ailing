@@ -12,13 +12,16 @@ Each counted token is one of:
   unknown for coverage, per the brief
 - unknown: anything else
 Whitespace and punctuation aren't counted.
+
+`Lexicon` is Thai's checker. Spanish has its own (spanish.py); both fit `Checker`, which is all the
+generator, the reader and `check` need.
 """
 
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Literal
+from typing import Literal, Protocol
 
 from pythainlp.corpus import thai_words
 from pythainlp.tokenize import word_tokenize
@@ -40,6 +43,9 @@ _NOT_A_WORD = re.compile(r"^[\W_ๆฯ]+$")
 
 # Whitespace with a Thai character on each side.
 _BETWEEN_THAI = re.compile(r"(?<=[฀-๿])\s+(?=[฀-๿])")
+# In a spaced language, the space a `|` became before closing punctuation or after opening.
+_SPACE_BEFORE_CLOSING = re.compile(r"\s+(?=[.,;:!?)\]»…])")
+_SPACE_AFTER_OPENING = re.compile(r"(?<=[¿¡(\[«])\s+")
 
 
 @dataclass(frozen=True)
@@ -73,7 +79,28 @@ class Coverage:
         return self.ratio >= floor
 
 
+class Checker(Protocol):
+    """What a language's coverage checker provides."""
+
+    known: frozenset[str]  # the deck entries counted as known
+    spaced: bool  # whether the language puts spaces between words
+
+    def segment(self, text: str) -> list[str]: ...
+
+    def status(self, token: str) -> Status: ...
+
+    def known_pieces(self, token: str) -> list[str] | None: ...
+
+    def entry_of(self, token: str) -> str | None:
+        """The deck entry this token is a form of (hablé for hablar), or None."""
+        ...
+
+
 class Lexicon:
+    """Thai: the deck's entries are the dictionary, and only they count as known."""
+
+    spaced = False
+
     def __init__(self, known: Iterable[str]) -> None:
         self.known = frozenset(w.strip() for w in known if w.strip())
 
@@ -117,20 +144,32 @@ class Lexicon:
     def _splits_into_known(self, token: str) -> bool:
         return self.known_pieces(token) is not None
 
+    def entry_of(self, token: str) -> str | None:
+        return token if token in self.known else None
 
-def parse_line(line: str) -> tuple[str, list[str]]:
+
+def parse_line(line: str, spaced: bool = False) -> tuple[str, list[str]]:
     """A model line (`ฉัน|ต้องการ|*น้ำ*`) as plain text plus its stretch words. Thai is written
-    without spaces, so any the model adds between Thai characters are dropped."""
-    stretch = re.findall(r"\*([^*|]+)\*", line)
-    plain = line.replace("|", "").replace("*", "")
-    return _BETWEEN_THAI.sub("", plain), [s.strip() for s in stretch]
+    without spaces, so any the model adds between Thai characters are dropped. In a spaced language
+    (`¿Qué|quieres|*tomar*?`) each `|` stands for a space, and punctuation stays on its word."""
+    joiner = " " if spaced else ""
+
+    def join(text: str) -> str:
+        text = text.replace("*", "").replace("|", joiner)
+        if not spaced:
+            return _BETWEEN_THAI.sub("", text)
+        text = " ".join(text.split())
+        return _SPACE_AFTER_OPENING.sub("", _SPACE_BEFORE_CLOSING.sub("", text))
+
+    stretch = [join(s).strip() for s in re.findall(r"\*([^*]+)\*", line)]
+    return join(line), [s for s in stretch if s]
 
 
-def check(lines: Iterable[str], lexicon: Lexicon) -> Coverage:
+def check(lines: Iterable[str], lexicon: Checker) -> Coverage:
     tokens: list[Token] = []
     stretch: list[str] = []
     for line in lines:
-        text, line_stretch = parse_line(line)
+        text, line_stretch = parse_line(line, lexicon.spaced)
         stretch.extend(line_stretch)
         tokens.extend(
             Token(piece, lexicon.status(piece)) for piece in lexicon.segment(text) if _counts(piece)

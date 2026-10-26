@@ -10,7 +10,10 @@
     POST  /api/topics/{id}/next       the next text for a topic; 202 {"writing": true} while one is
                                       being written in the background, so ask again shortly
     GET   /api/settings               {stretch_words: "topic" | "any", lines: 6 | 8 | 12,
-                                      form: "dialogue" | "story"}
+                                      form: "dialogue" | "story", language: "th" | "es"}
+
+Topics are shared by both languages. Everything else (ready texts, /next, progress, past texts,
+marked words, ideas) is in the current language, the `language` setting.
     PATCH /api/settings               the same fields; takes effect from the next text written
     GET   /api/texts                  texts read to the end, newest first, to read again
     GET   /api/texts/{id}             one text, in the same shape as /next; reading it again isn't logged
@@ -37,6 +40,7 @@ from ailing import config, store
 from ailing.ankimcp import ankimcp_call_tool
 from ailing.engine import Engine, NotAvailable, NotFound
 from ailing.generator import Ask, Form, claude_ask
+from ailing.languages import Code
 from ailing.lexicon import Entry
 from ailing.reader import gloss_for, render
 from ailing.store import Length, Reading, Settings, StoredText, StretchWords, Topic
@@ -66,6 +70,7 @@ class SettingsUpdate(BaseModel):
     stretch_words: StretchWords | None = None
     lines: Length | None = None
     form: Form | None = None
+    language: Code | None = None
 
 
 class ReadingIn(BaseModel):
@@ -103,7 +108,8 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
     @app.get("/api/topics", dependencies=authed)
     async def topics(background: BackgroundTasks) -> list[dict[str, Any]]:
         background.add_task(engine.top_up)
-        return [_topic(t, engine) for t in store.list_topics(engine.conn)]
+        language = engine.language()
+        return [_topic(t, engine, language) for t in store.list_topics(engine.conn, language)]
 
     @app.post("/api/topics", dependencies=authed)
     async def add_topic(body: NewTopic, background: BackgroundTasks) -> dict[str, Any]:
@@ -112,14 +118,14 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         background.add_task(engine.top_up)
-        return _topic(topic, engine)
+        return _topic(topic, engine, engine.language())
 
     @app.patch("/api/topics/{topic_id}", dependencies=authed)
     async def update_topic(topic_id: int, body: TopicUpdate) -> dict[str, Any]:
         topic = store.set_favorite(engine.conn, topic_id, body.favorite)
         if topic is None:
             raise HTTPException(404, "No such topic.")
-        return _topic(topic, engine)
+        return _topic(topic, engine, engine.language())
 
     @app.delete("/api/topics/{topic_id}", status_code=204, dependencies=authed)
     async def remove_topic(topic_id: int) -> Response:
@@ -129,10 +135,10 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
 
     @app.get("/api/suggestions", dependencies=authed)
     async def suggestions() -> list[dict[str, Any]]:
-        _, lexicon = engine.snapshot()
-        return [
-            {"name": s.name, "fit": s.fit} for s in suggest(lexicon, store.topic_names(engine.conn))
-        ]
+        language = engine.language()
+        _, lexicon = engine.snapshot(language)
+        taken = store.topic_names(engine.conn)
+        return [{"name": s.name, "fit": s.fit} for s in suggest(lexicon, taken, language)]
 
     @app.post("/api/topics/{topic_id}/next", dependencies=authed)
     async def next_text(topic_id: int, background: BackgroundTasks) -> Any:
@@ -159,7 +165,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
                 "coverage": t.coverage,
                 "form": t.form,
             }
-            for t in store.past_texts(engine.conn, PAST_TEXTS)
+            for t in store.past_texts(engine.conn, PAST_TEXTS, engine.language())
         ]
 
     @app.get("/api/texts/{text_id}", dependencies=authed)
@@ -190,6 +196,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
             stretch_words=body.stretch_words or current.stretch_words,
             lines=body.lines or current.lines,
             form=body.form or current.form,
+            language=body.language or current.language,
         )
         store.save_settings(engine.conn, updated)
         return updated.__dict__
@@ -216,8 +223,10 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
 
     @app.get("/api/progress", dependencies=authed)
     async def progress() -> dict[str, Any]:
-        done = store.progress(engine.conn, engine.clock() - timedelta(days=PROGRESS_DAYS))
-        difficulty = store.load_difficulty(engine.conn)
+        language = engine.language()
+        since = engine.clock() - timedelta(days=PROGRESS_DAYS)
+        done = store.progress(engine.conn, since, language)
+        difficulty = store.load_difficulty(engine.conn, language)
         return {
             "days": PROGRESS_DAYS,
             "finished": done.finished,
@@ -228,17 +237,19 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
 
     @app.get("/api/words", dependencies=authed)
     async def words() -> list[dict[str, Any]]:
-        entries, lexicon = engine.snapshot()
+        language = engine.language()
+        entries, lexicon = engine.snapshot(language)
         meanings = {e.text: e.meaning for e in entries}
         return [
             {
                 "word": w.word,
                 "gloss": gloss_for(w.word, w.glosses, lexicon, meanings),
                 "status": lexicon.status(w.word),
+                "deck": lexicon.entry_of(w.word) is not None,
                 "times": w.times,
                 "last_marked": w.last_marked.isoformat(),
             }
-            for w in store.marked_words(engine.conn)
+            for w in store.marked_words(engine.conn, language)
         ]
 
     @app.post("/api/words/clear", status_code=204, dependencies=authed)
@@ -250,7 +261,7 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
 
 
 def _rendered(text: StoredText, engine: Engine) -> dict[str, Any]:
-    entries, lexicon = engine.snapshot()
+    entries, lexicon = engine.snapshot(text.language)
     out = render(text, lexicon, {e.text: e.meaning for e in entries})
     speaks = engine.audio is not None and engine.synthesize is not None
     for i, line in enumerate(out["lines"]):
@@ -258,13 +269,15 @@ def _rendered(text: StoredText, engine: Engine) -> dict[str, Any]:
     return out
 
 
-def _topic(t: Topic, engine: Engine) -> dict[str, Any]:
+def _topic(t: Topic, engine: Engine, language: Code) -> dict[str, Any]:
+    # A topic's ready count is per language, so it's read again for the one being shown.
+    t = store.get_topic(engine.conn, t.id, language) or t
     return {
         "id": t.id,
         "name": t.name,
         "favorite": t.favorite,
         "ready": t.ready,
-        "state": engine.topic_state(t),
+        "state": engine.topic_state(t, language),
     }
 
 
@@ -274,12 +287,12 @@ def production_app() -> FastAPI:
     settings = config.load()
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = store.connect(settings.db_path)
-    ask_for: Callable[[list[Entry]], Ask] | None = None
+    ask_for: Callable[[list[Entry], Code], Ask] | None = None
     if key := settings.secrets.get("ANTHROPIC_API_KEY"):
         client = anthropic.AsyncAnthropic(api_key=key)
 
-        def ask_for(entries: list[Entry]) -> Ask:
-            return claude_ask(client, entries)
+        def ask_for(entries: list[Entry], language: Code) -> Ask:
+            return claude_ask(client, entries, language)
 
     synthesize = None
     key, region = (

@@ -13,10 +13,12 @@ from typing import Any, Literal
 from ailing.difficulty import Difficulty
 from ailing.gateway import AnkiUnavailable, CallTool
 from ailing.generator import MODEL, Form, Generated, Line
+from ailing.languages import LANGUAGES, Code
 from ailing.lexicon import Entry, fetch_snapshot
 
 SNAPSHOT_MAX_AGE = timedelta(hours=24)
-LANGUAGE = "thai"
+# How the reading log names each language (it said "thai" before there was a second one).
+LOG_LANGUAGE: dict[Code, str] = {"th": "thai", "es": "spanish"}
 MODE = "read_listen"
 
 log = logging.getLogger(__name__)
@@ -99,6 +101,7 @@ class StoredText:
     coverage: float
     roles: dict[str, str] = field(default_factory=dict)
     form: Form = "dialogue"
+    language: Code = "th"
 
 
 # "topic": the model chooses stretch words that fit the topic from a list of due and young words.
@@ -115,6 +118,7 @@ class Settings:
     stretch_words: StretchWords = "topic"
     lines: Length = 8
     form: Form = "dialogue"
+    language: Code = "th"  # the language new texts are written and served in
 
 
 @dataclass(frozen=True)
@@ -137,6 +141,10 @@ def connect(path: Path | str) -> sqlite3.Connection:
     if "roles" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
         # Texts written before speakers had roles have none, and show only A and B.
         conn.execute("ALTER TABLE texts ADD COLUMN roles TEXT NOT NULL DEFAULT '{}'")
+    for table in ("lexicon", "texts"):
+        if "language" not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            # Everything from before Spanish is Thai.
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN language TEXT NOT NULL DEFAULT 'th'")
     if "form" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
         # Every text written before stories was a dialogue.
         conn.execute("ALTER TABLE texts ADD COLUMN form TEXT NOT NULL DEFAULT 'dialogue'")
@@ -152,23 +160,38 @@ def connect(path: Path | str) -> sqlite3.Connection:
 # ==== Lexicon ====
 
 
-def save_snapshot(conn: sqlite3.Connection, entries: list[Entry], taken_at: datetime) -> None:
-    """Replaces the whole snapshot in one transaction, so a reader never sees half of one."""
+def _per_language(key: str, language: Code) -> str:
+    # Thai keeps the key it had before there was a second language.
+    return key if language == "th" else f"{key}:{language}"
+
+
+def save_snapshot(
+    conn: sqlite3.Connection, entries: list[Entry], taken_at: datetime, language: Code = "th"
+) -> None:
+    """Replaces one language's whole snapshot in one transaction, so a reader never sees half."""
     with conn:
-        conn.execute("DELETE FROM lexicon")
+        conn.execute("DELETE FROM lexicon WHERE language = ?", (language,))
         conn.executemany(
-            "INSERT INTO lexicon (note_id, entry, meaning, tier, due) VALUES (?, ?, ?, ?, ?)",
-            [(e.note_id, e.text, e.meaning, e.tier, int(e.due)) for e in entries],
+            # OR REPLACE: a note moved to the other language's deck belongs to the newer snapshot.
+            "INSERT OR REPLACE INTO lexicon (note_id, entry, meaning, tier, due, language)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [(e.note_id, e.text, e.meaning, e.tier, int(e.due), language) for e in entries],
         )
-        _set_meta(conn, "snapshot_taken_at", taken_at.isoformat())
+        _set_meta(conn, _per_language("snapshot_taken_at", language), taken_at.isoformat())
 
 
-def load_snapshot(conn: sqlite3.Connection) -> tuple[list[Entry], datetime | None]:
-    rows = conn.execute("SELECT note_id, entry, meaning, tier, due FROM lexicon ORDER BY note_id")
+def load_snapshot(
+    conn: sqlite3.Connection, language: Code = "th"
+) -> tuple[list[Entry], datetime | None]:
+    rows = conn.execute(
+        "SELECT note_id, entry, meaning, tier, due FROM lexicon WHERE language = ?"
+        " ORDER BY note_id",
+        (language,),
+    )
     entries = [
         Entry(nid, entry, meaning, tier, bool(due)) for nid, entry, meaning, tier, due in rows
     ]
-    taken_at = _get_meta(conn, "snapshot_taken_at")
+    taken_at = _get_meta(conn, _per_language("snapshot_taken_at", language))
     return entries, datetime.fromisoformat(taken_at) if taken_at else None
 
 
@@ -176,21 +199,25 @@ def is_stale(taken_at: datetime | None, now: datetime) -> bool:
     return taken_at is None or now - taken_at >= SNAPSHOT_MAX_AGE
 
 
-async def refresh_if_stale(conn: sqlite3.Connection, call: CallTool, now: datetime) -> bool:
-    """Takes a new snapshot when the last one is a day old. If Anki can't be reached, the old
-    snapshot stays in place and the app keeps running on it. Returns whether it refreshed."""
-    _, taken_at = load_snapshot(conn)
+async def refresh_if_stale(
+    conn: sqlite3.Connection, call: CallTool, now: datetime, language: Code = "th"
+) -> bool:
+    """Takes a new snapshot of one language's deck when the last one is a day old. If Anki can't
+    be reached, the old snapshot stays in place and the app keeps running on it. Returns whether
+    it refreshed."""
+    _, taken_at = load_snapshot(conn, language)
     if not is_stale(taken_at, now):
         return False
+    name = LANGUAGES[language].name
     try:
-        entries = await fetch_snapshot(call)
+        entries = await fetch_snapshot(call, LANGUAGES[language])
     except AnkiUnavailable as e:
-        log.warning("Lexicon not refreshed, using the snapshot from %s: %s", taken_at, e)
+        log.warning("%s lexicon not refreshed, using the snapshot from %s: %s", name, taken_at, e)
         return False
     if not entries:
-        log.warning("Anki returned no Thai notes; keeping the snapshot from %s", taken_at)
+        log.warning("Anki returned no %s notes; keeping the snapshot from %s", name, taken_at)
         return False
-    save_snapshot(conn, entries, now)
+    save_snapshot(conn, entries, now, language)
     return True
 
 
@@ -218,15 +245,18 @@ def add_topic(conn: sqlite3.Connection, name: str, favorite: bool, now: datetime
     return topic
 
 
-def get_topic(conn: sqlite3.Connection, topic_id: int) -> Topic | None:
-    return next((t for t in list_topics(conn) if t.id == topic_id), None)
+def get_topic(conn: sqlite3.Connection, topic_id: int, language: Code = "th") -> Topic | None:
+    return next((t for t in list_topics(conn, language) if t.id == topic_id), None)
 
 
-def list_topics(conn: sqlite3.Connection) -> list[Topic]:
+def list_topics(conn: sqlite3.Connection, language: Code = "th") -> list[Topic]:
+    """Topics are shared by every language; `ready` counts the texts waiting in this one."""
     rows = conn.execute(
         """SELECT t.id, t.name, t.favorite,
-                  (SELECT COUNT(*) FROM texts x WHERE x.topic_id = t.id AND x.status = 'ready')
-           FROM topics t WHERE t.removed = 0 ORDER BY t.favorite DESC, t.name"""
+                  (SELECT COUNT(*) FROM texts x WHERE x.topic_id = t.id AND x.status = 'ready'
+                   AND x.language = ?)
+           FROM topics t WHERE t.removed = 0 ORDER BY t.favorite DESC, t.name""",
+        (language,),
     )
     return [Topic(i, name, bool(fav), ready) for i, name, fav, ready in rows]
 
@@ -265,6 +295,7 @@ def save_text(
     now: datetime,
     status: str = "ready",
     form: Form = "dialogue",
+    language: Code = "th",
 ) -> int:
     """Stores a generated text. `status` is "pending" while its audio is made, "ready" once it can
     be served, or "dropped" for a text that missed the floor (kept only for its cost)."""
@@ -273,8 +304,8 @@ def save_text(
         cur = conn.execute(
             """INSERT INTO texts (topic_id, created_at, status, title, lines, glosses, stretch,
                    coverage, token_count, floor, attempts, model, input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens, cost_usd, roles, form)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   cache_read_tokens, cache_write_tokens, cost_usd, roles, form, language)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 topic_id,
                 now.isoformat(),
@@ -295,6 +326,7 @@ def save_text(
                 u.cost_usd(),
                 json.dumps(generated.roles, ensure_ascii=False),
                 form,
+                language,
             ),
         )
     assert cur.lastrowid is not None
@@ -311,11 +343,13 @@ def text_status(conn: sqlite3.Connection, text_id: int) -> str | None:
     return row[0] if row else None
 
 
-def next_ready_text(conn: sqlite3.Connection, topic_id: int) -> StoredText | None:
+def next_ready_text(
+    conn: sqlite3.Connection, topic_id: int, language: Code = "th"
+) -> StoredText | None:
     row = conn.execute(
         f"SELECT {_TEXT_COLUMNS} FROM texts WHERE topic_id = ? AND status = 'ready' "
-        "ORDER BY id LIMIT 1",
-        (topic_id,),
+        "AND language = ? ORDER BY id LIMIT 1",
+        (topic_id, language),
     ).fetchone()
     return _text(row) if row else None
 
@@ -325,11 +359,11 @@ def get_text(conn: sqlite3.Connection, text_id: int) -> StoredText | None:
     return _text(row) if row else None
 
 
-_TEXT_COLUMNS = "id, topic_id, title, lines, glosses, stretch, coverage, roles, form"
+_TEXT_COLUMNS = "id, topic_id, title, lines, glosses, stretch, coverage, roles, form, language"
 
 
 def _text(row: tuple[Any, ...]) -> StoredText:
-    text_id, topic_id, title, lines, glosses, stretch, coverage, roles, form = row
+    text_id, topic_id, title, lines, glosses, stretch, coverage, roles, form, language = row
     return StoredText(
         id=text_id,
         topic_id=topic_id,
@@ -340,6 +374,7 @@ def _text(row: tuple[Any, ...]) -> StoredText:
         coverage=coverage,
         roles=json.loads(roles),
         form=form,
+        language=language,
     )
 
 
@@ -349,6 +384,8 @@ def _text(row: tuple[Any, ...]) -> StoredText:
 def log_reading(conn: sqlite3.Connection, text_id: int, reading: Reading, now: datetime) -> None:
     """Records one session with a text. The text leaves the ready queue either way, so the same
     text isn't served twice."""
+    row = conn.execute("SELECT language FROM texts WHERE id = ?", (text_id,)).fetchone()
+    language: Code = row[0] if row else "th"
     with conn:
         conn.execute(
             """INSERT INTO readings (text_id, logged_at, language, mode, rating, finished,
@@ -357,7 +394,7 @@ def log_reading(conn: sqlite3.Connection, text_id: int, reading: Reading, now: d
             (
                 text_id,
                 now.isoformat(),
-                LANGUAGE,
+                LOG_LANGUAGE[language],
                 MODE,
                 reading.rating,
                 int(reading.finished),
@@ -380,11 +417,11 @@ class Progress:
     ratings: dict[str, int]  # too_easy, about_right, too_hard, and none for unrated
 
 
-def progress(conn: sqlite3.Connection, since: datetime) -> Progress:
+def progress(conn: sqlite3.Connection, since: datetime, language: Code = "th") -> Progress:
     rows = conn.execute(
         """SELECT x.coverage, r.rating FROM readings r JOIN texts x ON x.id = r.text_id
-           WHERE r.finished = 1 AND r.logged_at >= ?""",
-        (since.isoformat(),),
+           WHERE r.finished = 1 AND r.logged_at >= ? AND x.language = ?""",
+        (since.isoformat(), language),
     ).fetchall()
     ratings = {"too_easy": 0, "about_right": 0, "too_hard": 0, "none": 0}
     for _, rating in rows:
@@ -394,13 +431,15 @@ def progress(conn: sqlite3.Connection, since: datetime) -> Progress:
     return Progress(len(rows), median, ratings)
 
 
-def practiced_days(conn: sqlite3.Connection, before: datetime) -> dict[str, int]:
+def practiced_days(
+    conn: sqlite3.Connection, before: datetime, language: Code = "th"
+) -> dict[str, int]:
     """For each word that was a stretch word in a text read before `before`, the number of
     different days it was one."""
     rows = conn.execute(
         """SELECT DISTINCT substr(r.logged_at, 1, 10), x.stretch FROM readings r
-           JOIN texts x ON x.id = r.text_id WHERE r.logged_at < ?""",
-        (before.isoformat(),),
+           JOIN texts x ON x.id = r.text_id WHERE r.logged_at < ? AND x.language = ?""",
+        (before.isoformat(), language),
     )
     days: dict[str, set[str]] = {}
     for day, stretch in rows:
@@ -420,13 +459,13 @@ class PastText:
     form: Form = "dialogue"
 
 
-def past_texts(conn: sqlite3.Connection, limit: int) -> list[PastText]:
-    """Texts read to the end, most recent first."""
+def past_texts(conn: sqlite3.Connection, limit: int, language: Code = "th") -> list[PastText]:
+    """Texts in this language read to the end, most recent first."""
     rows = conn.execute(
         """SELECT x.id, t.name, x.title, r.rating, r.logged_at, x.coverage, x.form FROM readings r
            JOIN texts x ON x.id = r.text_id JOIN topics t ON t.id = x.topic_id
-           WHERE r.finished = 1 ORDER BY r.id DESC LIMIT ?""",
-        (limit,),
+           WHERE r.finished = 1 AND x.language = ? ORDER BY r.id DESC LIMIT ?""",
+        (language, limit),
     )
     return [
         PastText(i, topic, title, rating, datetime.fromisoformat(at), coverage, form)
@@ -445,15 +484,17 @@ class MarkedWord:
     glosses: dict[str, str]  # the glosses of the last text it was marked in
 
 
-def marked_words(conn: sqlite3.Connection) -> list[MarkedWord]:
-    """Every word marked unknown in a reading and not cleared since, most recently marked first."""
+def marked_words(conn: sqlite3.Connection, language: Code = "th") -> list[MarkedWord]:
+    """Every word marked unknown in a reading in this language and not cleared since, most
+    recently marked first."""
     cleared = {
         word: datetime.fromisoformat(at)
         for word, at in conn.execute("SELECT word, cleared_at FROM cleared_words")
     }
     rows = conn.execute(
         """SELECT r.logged_at, r.words_flagged, x.glosses FROM readings r
-           JOIN texts x ON x.id = r.text_id ORDER BY r.id"""
+           JOIN texts x ON x.id = r.text_id WHERE x.language = ? ORDER BY r.id""",
+        (language,),
     )
     found: dict[str, MarkedWord] = {}
     for logged_at, flagged, glosses in rows:
@@ -478,14 +519,17 @@ def clear_word(conn: sqlite3.Connection, word: str, now: datetime) -> None:
 # ==== Difficulty ====
 
 
-def load_difficulty(conn: sqlite3.Connection) -> Difficulty:
-    raw = _get_meta(conn, "difficulty")
+def load_difficulty(conn: sqlite3.Connection, language: Code = "th") -> Difficulty:
+    """Each language has its own, moved by ratings of texts in that language."""
+    raw = _get_meta(conn, _per_language("difficulty", language))
     return Difficulty(**json.loads(raw)) if raw else Difficulty()
 
 
-def save_difficulty(conn: sqlite3.Connection, difficulty: Difficulty) -> None:
+def save_difficulty(
+    conn: sqlite3.Connection, difficulty: Difficulty, language: Code = "th"
+) -> None:
     with conn:
-        _set_meta(conn, "difficulty", json.dumps(difficulty.__dict__))
+        _set_meta(conn, _per_language("difficulty", language), json.dumps(difficulty.__dict__))
 
 
 # ==== Settings ====

@@ -15,6 +15,7 @@ import {
   type Api,
   ApiError,
   type Form,
+  type Language,
   type Length,
   type Progress,
   type Settings,
@@ -24,6 +25,7 @@ import {
 } from "../api";
 import { Card, ErrorNote, Hint, PillButton, SectionLabel, Segments, TextButton } from "../components/ui";
 import { ideaPage } from "../ideas";
+import { LANGUAGE_ORDER, LANGUAGES } from "../languages";
 import { describeProgress } from "../progress";
 import { font, radius, spacing, useColors } from "../theme";
 
@@ -89,15 +91,26 @@ export function TopicsScreen({
     api.settings().then(setSettings, () => {});
   }, [api]);
 
-  async function changeSetting(change: Partial<Settings>) {
+  // Whether the server took the change.
+  async function changeSetting(change: Partial<Settings>): Promise<boolean> {
     const before = settings;
     setSettings((s) => (s ? { ...s, ...change } : s));
     setSettingError(null);
     try {
       setSettings(await api.updateSettings(change));
+      return true;
     } catch (e) {
       setSettings(before);
       setSettingError(e instanceof ApiError ? e.message : "Couldn't change that setting. Try again.");
+      return false;
+    }
+  }
+
+  // Topics are shared by both languages; everything else on this screen is the chosen one's.
+  async function changeLanguage(language: Language) {
+    if (await changeSetting({ language })) {
+      setIdeaPageIndex(0);
+      await Promise.all([load(), loadExtras()]);
     }
   }
 
@@ -187,8 +200,16 @@ export function TopicsScreen({
     >
       <Text style={[styles.title, { color: c.text }]}>Read &amp; Listen</Text>
       <Text style={[styles.sub, { color: c.textSecondary }]}>
-        Pick a topic. Texts use words from your Thai deck.
+        {`Pick a topic. Texts use words from your ${LANGUAGES[settings?.language ?? "th"].name} deck.`}
       </Text>
+      {settings ? (
+        <Segments<Language>
+          style={styles.language}
+          options={LANGUAGE_ORDER.map((code) => ({ value: code, label: LANGUAGES[code].name }))}
+          value={settings.language}
+          onChange={changeLanguage}
+        />
+      ) : null}
 
       {error ? <ErrorNote message={error} onRetry={load} /> : null}
       {topics === null && !error ? <ActivityIndicator style={styles.loading} /> : null}
@@ -257,7 +278,9 @@ export function TopicsScreen({
           {ideas.length > ideaPage(ideas, 0).length ? (
             <TextButton label="More ideas" onPress={() => setIdeaPageIndex((p) => p + 1)} />
           ) : null}
-          <Hint>Ideas that use more of your deck come first. Tap one to read about it, and star it to keep texts coming.</Hint>
+          <Hint>
+            {`${settings?.language === "es" ? "" : "Ideas that use more of your deck come first. "}Tap one to read about it, and star it to keep texts coming.`}
+          </Hint>
         </>
       ) : null}
 
@@ -486,6 +509,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: font.lg, minHeight: 44 },
   adding: { marginHorizontal: spacing.smd },
   segments: { marginHorizontal: spacing.md },
+  language: { marginHorizontal: spacing.md, marginTop: spacing.md },
   logOut: { marginTop: spacing.lg },
   wordsRow: { paddingLeft: spacing.md },
   ideas: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, paddingHorizontal: spacing.md },

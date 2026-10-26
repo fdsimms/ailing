@@ -28,8 +28,15 @@ def test_lines_are_split_by_the_server_with_status_and_gloss() -> None:
         "status": "known",
         "gloss": "mango sticky rice",
         "stretch": True,
+        "deck": True,
     }
-    assert words[4] == {"text": "!", "status": None, "gloss": None, "stretch": False}
+    assert words[4] == {
+        "text": "!",
+        "status": None,
+        "gloss": None,
+        "stretch": False,
+        "deck": False,
+    }
     assert out["lines"][0]["english"] == "I'd like mango sticky rice."
 
 
@@ -50,6 +57,7 @@ def test_a_word_off_the_list_takes_the_models_gloss() -> None:
         "status": "unknown",
         "gloss": "give change",
         "stretch": False,
+        "deck": False,  # unreviewed, so not counted as a deck word
     }
 
 

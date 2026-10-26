@@ -245,13 +245,20 @@ def test_the_stretch_setting_can_be_read_and_changed() -> None:
         "stretch_words": "topic",
         "lines": 8,
         "form": "dialogue",
+        "language": "th",
     }
     changed = c.patch("/api/settings", headers=AUTH, json={"stretch_words": "any"})
-    assert changed.json() == {"stretch_words": "any", "lines": 8, "form": "dialogue"}
+    assert changed.json() == {
+        "stretch_words": "any",
+        "lines": 8,
+        "form": "dialogue",
+        "language": "th",
+    }
     assert c.get("/api/settings", headers=AUTH).json() == {
         "stretch_words": "any",
         "lines": 8,
         "form": "dialogue",
+        "language": "th",
     }
     assert (
         c.patch("/api/settings", headers=AUTH, json={"stretch_words": "loose"}).status_code == 422
@@ -312,6 +319,7 @@ def test_marked_words_are_listed_with_glosses_until_cleared() -> None:
         ("ข้าวเหนียวมะม่วง", 1, "known"),
     ]
     assert words[0]["gloss"] == "polite particle (male)"
+    assert words[0]["deck"] is True
 
     assert c.post("/api/words/clear", json={"word": "ครับ"}, headers=AUTH).status_code == 204
     assert [w["word"] for w in c.get("/api/words", headers=AUTH).json()] == ["ข้าวเหนียวมะม่วง"]
@@ -321,7 +329,12 @@ def test_marked_words_are_listed_with_glosses_until_cleared() -> None:
 def test_the_length_setting_can_be_changed_to_a_length_offered() -> None:
     c = client()
     changed = c.patch("/api/settings", headers=AUTH, json={"lines": 12})
-    assert changed.json() == {"stretch_words": "topic", "lines": 12, "form": "dialogue"}
+    assert changed.json() == {
+        "stretch_words": "topic",
+        "lines": 12,
+        "form": "dialogue",
+        "language": "th",
+    }
     assert c.patch("/api/settings", headers=AUTH, json={"lines": 30}).status_code == 422
 
 

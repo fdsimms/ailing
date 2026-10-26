@@ -1,7 +1,7 @@
 import type { ReaderText, Word } from "../api";
 import { countOutsideDeck, isOutsideDeck, underFloor } from "../deckWords";
 
-const word = (text: string, status: Word["status"]): Word => ({ text, status, gloss: null, stretch: false });
+const word = (text: string, status: Word["status"]): Word => ({ text, status, gloss: null, stretch: false, deck: false });
 
 test("unknown and partial words are outside the deck; known words and punctuation aren't", () => {
   expect(isOutsideDeck(word("ทอน", "unknown"))).toBe(true);
@@ -19,6 +19,7 @@ test("counts every occurrence across the lines", () => {
     stretch: [],
     roles: {},
     form: "dialogue",
+    language: "th",
     lines: [
       { speaker: "A", english: "", audio: false, words: [word("ทอน", "unknown"), word("ครับ", "known")] },
       { speaker: "B", english: "", audio: false, words: [word("ทอน", "unknown"), word("รับ", "partial")] },
@@ -36,6 +37,7 @@ test("a text under 95% is flagged as under the usual floor; one at 95% isn't", (
     stretch: [],
     roles: {},
     form: "story",
+    language: "th",
     lines: [],
   });
   expect(underFloor(text(0.923))).toBe(true);

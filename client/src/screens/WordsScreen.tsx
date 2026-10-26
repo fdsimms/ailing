@@ -6,13 +6,8 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View }
 
 import { type Api, ApiError, type MarkedWord } from "../api";
 import { Card, ErrorNote, Hint, NavBar, PillButton } from "../components/ui";
+import { wordStatus } from "../languages";
 import { font, spacing, thaiFont, useColors } from "../theme";
-
-const STATUS: Record<MarkedWord["status"], string> = {
-  known: "In your deck",
-  partial: "Only inside a longer phrase in your deck",
-  unknown: "Not in your deck",
-};
 
 export function WordsScreen({ api, onBack }: { api: Api; onBack: () => void }) {
   const c = useColors();
@@ -79,7 +74,7 @@ export function WordsScreen({ api, onBack }: { api: Api; onBack: () => void }) {
                     <Text style={[styles.word, { color: c.text }]}>{w.word}</Text>
                     <Text style={[styles.gloss, { color: c.text }]}>{w.gloss ?? "No meaning available"}</Text>
                     <Text style={[styles.meta, { color: c.textTertiary }]}>
-                      {STATUS[w.status]}
+                      {wordStatus(w)}
                       {w.times > 1 ? `. Marked ${w.times} times.` : ""}
                     </Text>
                   </View>

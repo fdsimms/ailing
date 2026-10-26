@@ -11,10 +11,10 @@
 // ==== Reading again ====
 // A past text opens in the same reader with nothing logged: no Done, no rating, and no marking words
 // unknown, since a second reading of a text isn't recorded. One rated "About right" can be played
-// with the Thai hidden straight away.
+// with the text hidden straight away.
 //
 // ==== Listen only ====
-// Once a text is rated "About right", the end view offers to play it again with the Thai hidden
+// Once a text is rated "About right", the end view offers to play it again with the text hidden
 // (docs/brief.md, design principle 6). The lines show who's speaking instead, the dialogue plays from
 // the start, and "Show the text" brings the words back. The reading is logged as listen-only.
 //
@@ -73,7 +73,8 @@ import {
   toLog,
   toggleFlag,
 } from "../session";
-import { type Colors, font, radius, spacing, thaiFont, useColors } from "../theme";
+import { LANGUAGES, wordStatus } from "../languages";
+import { type Colors, font, radius, spacing, useColors } from "../theme";
 
 type Tapped = { word: Word; x: number; y: number };
 
@@ -361,7 +362,9 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                 />
               </View>
               <View style={[styles.toggle, styles.toggleNext]}>
-                <Text style={[styles.toggleText, { color: c.textSecondary }]}>Highlight words not in your deck</Text>
+                <Text style={[styles.toggleText, { color: c.textSecondary }]}>
+                  {LANGUAGES[text.language ?? "th"].highlightLabel}
+                </Text>
                 <Switch
                   value={highlight}
                   onValueChange={(on) => {
@@ -369,7 +372,7 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                     setHighlight(on);
                   }}
                   trackColor={{ true: c.accent }}
-                  accessibilityLabel="Highlight words not in your deck"
+                  accessibilityLabel={LANGUAGES[text.language ?? "th"].highlightLabel}
                 />
               </View>
               {highlight && countOutsideDeck(text) === 0 ? (
@@ -423,6 +426,7 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                       <WordView
                         key={j}
                         word={word}
+                        textStyle={readStyle(text)}
                         flagged={isFlagged(session, word.text)}
                         highlighted={highlight && isOutsideDeck(word)}
                         selected={tapped?.word === word}
@@ -553,7 +557,7 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
           {rating === "about_right" && firstLine(text.lines) !== null ? (
             <View style={styles.listenAgain}>
               <PillButton label="Listen without the text" onPress={listenWithoutText} />
-              <Hint>Plays the dialogue again with the Thai hidden.</Hint>
+              <Hint>Plays it again with the text hidden.</Hint>
             </View>
           ) : null}
           <View style={styles.endButtons}>
@@ -581,6 +585,12 @@ const RATINGS: { value: Rating; label: string; hint: string }[] = [
   { value: "too_hard", label: "Too hard", hint: "Fewer new words next time" },
 ];
 
+// The reading size for a text's language. `language` is missing from a server older than Spanish.
+function readStyle(text: ReaderText) {
+  const info = LANGUAGES[text.language ?? "th"];
+  return { fontSize: info.fontSize, lineHeight: info.fontSize * info.lineHeight };
+}
+
 function speakerColors(c: Colors, who: "A" | "B") {
   return who === "A"
     ? { backgroundColor: c.accentSubtle, color: c.accentText }
@@ -594,12 +604,14 @@ function glossFor(text: ReaderText, word: string): string | null {
 
 function WordView({
   word,
+  textStyle,
   flagged,
   highlighted,
   selected,
   onPress,
 }: {
   word: Word;
+  textStyle: { fontSize: number; lineHeight: number };
   flagged: boolean;
   highlighted: boolean;
   selected: boolean;
@@ -609,9 +621,9 @@ function WordView({
   if (word.status === null) {
     // A space becomes a gap; punctuation is shown but can't be tapped.
     return word.text.trim() ? (
-      <Text style={[styles.thai, { color: c.text }]}>{word.text}</Text>
+      <Text style={[textStyle, { color: c.text }]}>{word.text}</Text>
     ) : (
-      <View style={styles.space} />
+      <View style={{ width: textStyle.fontSize * 0.3 }} />
     );
   }
   return (
@@ -635,7 +647,7 @@ function WordView({
     >
       <Text
         style={[
-          styles.thai,
+          textStyle,
           { color: word.stretch ? c.accentText : c.text },
           word.stretch && styles.stretch,
           (word.stretch || flagged) && {
@@ -681,12 +693,7 @@ function GlossPopover({
     above >= insets.top + spacing.sm ? above : tapped.y + POPOVER_GAP,
     height - popHeight - insets.bottom - spacing.sm,
   );
-  const status =
-    tapped.word.status === "known"
-      ? "In your deck"
-      : tapped.word.status === "partial"
-        ? "Only inside a longer phrase in your deck"
-        : "Not in your deck";
+  const status = wordStatus(tapped.word);
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
@@ -875,11 +882,9 @@ const styles = StyleSheet.create({
     // so tappable words sit flush and only real spaces in the text show as gaps.
     marginHorizontal: -1.5,
   },
-  space: { width: 8 },
-  thai: { fontSize: thaiFont, lineHeight: thaiFont * 1.75 },
   stretch: { fontWeight: "700" },
   english: { fontSize: 14, lineHeight: 18, marginTop: 2 },
-  hiddenLine: { fontSize: font.md, lineHeight: thaiFont * 1.75 },
+  hiddenLine: { fontSize: font.md, lineHeight: 40 },
   lineButtons: { gap: spacing.xs },
   enLabel: { fontSize: font.xs, fontWeight: "700" },
   listenOnly: {

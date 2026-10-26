@@ -10,7 +10,11 @@ from ailing.tts import OUTPUT_FORMAT, AudioCache, TtsFailed, azure_synthesize, s
 def test_ssml_names_the_voice_and_escapes_the_text() -> None:
     out = ssml("A & B <ok>", "th-TH-NiwatNeural")
     assert '<voice name="th-TH-NiwatNeural">A &amp; B &lt;ok&gt;</voice>' in out
-    assert out.startswith("<speak version='1.0' xml:lang='th-TH'>")
+    assert out.startswith("<speak version='1.0' xml:lang=\"th-TH\">")
+
+
+def test_ssml_takes_the_language_from_the_voice() -> None:
+    assert 'xml:lang="es-MX"' in ssml("¿Qué tal?", "es-MX-JorgeNeural")
 
 
 def run(handler: httpx.MockTransport, text: str = "สวัสดีครับ") -> bytes:
