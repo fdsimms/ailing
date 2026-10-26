@@ -652,8 +652,9 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1.5,
     borderColor: "transparent",
-    paddingHorizontal: 1,
-    marginRight: 3,
+    // Thai has no spaces between words. The negative margin cancels the border
+    // so tappable words sit flush and only real spaces in the text show as gaps.
+    marginHorizontal: -1.5,
   },
   space: { width: 8 },
   thai: { fontSize: thaiFont, lineHeight: thaiFont * 1.75 },
