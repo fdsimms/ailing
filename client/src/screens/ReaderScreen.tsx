@@ -181,7 +181,8 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
     // Loads once per topic; `load` itself is recreated each render.
   }, [topic.id]);
 
-  // Every way out of a text logs it once, which also takes it off the ready queue.
+  // Finishing a text (Done) logs it once, which also takes it off the ready queue. Backing out
+  // before Done logs nothing, so the same text is waiting next time instead of a new one.
   async function finish(then: "next" | "back") {
     player.pause();
     if (leaving) {
@@ -192,7 +193,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       }
       return;
     }
-    if (text && session && !logged.current) {
+    if (text && session && ended && !logged.current) {
       logged.current = true;
       setLeaving(true);
       try {

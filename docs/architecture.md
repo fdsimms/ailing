@@ -38,8 +38,9 @@ brief disagree, this file is newer.
 - Three screens (login, topics, reader) switched by state in `App.tsx`, with no navigation library.
   The reader shows the server's word split as tappable words: a tap shows the gloss, and marking a
   word unknown is a second tap inside the gloss, so looking up a half-known word doesn't also flag it.
-- Leaving a text by any route logs the reading once, rated or not, which takes it off the ready queue.
-  A text left by closing the app isn't logged, so it's served again next time.
+- Finishing a text (tapping Done) logs the reading once, rated or not, which takes it off the ready
+  queue. A text left before Done (Back, or closing the app) isn't logged, so it's served again next
+  time instead of a new one being written.
 - When the server rejects the saved passphrase (it was changed), the app forgets it and asks again.
   Topics also has a Log out.
 
