@@ -35,12 +35,31 @@ brief disagree, this file is newer.
   locked or in another app. That was the main thing a web app couldn't do well.
 - The server's address is plain build config: `EXPO_PUBLIC_API_URL` in `client/eas.json`, inlined at
   build time. It has to match the Fly app's name (`server/fly.toml`). Nothing secret ships in the app.
-- Three screens (login, topics, reader) switched by state in `App.tsx`, with no navigation library.
-  The reader shows the server's word split as tappable words: a tap shows the gloss, and marking a
-  word unknown is a second tap inside the gloss, so looking up a half-known word doesn't also flag it.
+- Four screens (login, topics, reader, marked words) switched by state in `App.tsx`, with no
+  navigation library. The reader shows the server's word split as tappable words: a tap shows the
+  gloss, and marking a word unknown is a second tap inside the gloss, so looking up a half-known
+  word doesn't also flag it.
+- Each line has an EN button that shows that line's English alone, so checking one line doesn't
+  give away the rest. "Show English" still shows them all.
+- **Listen only** (brief, design principle 6). Once a text is rated "About right", the end view
+  offers to play it again with the Thai hidden; the lines show who's speaking instead, and "Show the
+  text" brings the words back. The reading is then logged with `listen_only` true. The brief's
+  "unlocks for a text" is read as "for the text just rated", since a text is never served twice.
+- While audio plays, the text scrolls to keep the line being spoken in view.
+- The reader's playback speed and the highlight switch are kept between launches, in the keychain
+  next to the passphrase (`client/src/savedPrefs.ts`), so no new native module was needed.
+- **Progress** on the topics screen: finished texts over the last 14 days against the Milestone 1
+  exit check (10 texts, median coverage 95% or more, most rated "about right"), and the coverage
+  target and practice word count new texts are written at, so the effect of a rating is visible.
+  Only finished readings count.
+- **Marked words**: every word marked unknown in a reading, newest first, with its gloss and whether
+  it's in the deck, so they can be added to Anki by hand. Read-only toward Anki. "Clear" hides a
+  word until it's marked again (`cleared_words` table). This is the list Milestone 3's mining queue
+  would start from.
 - Finishing a text (tapping Done) logs the reading once, rated or not, which takes it off the ready
   queue. A text left before Done (Back, or closing the app) isn't logged, so it's served again next
-  time instead of a new one being written.
+  time instead of a new one being written. A listen-only pass comes after Done, so leaving it by
+  any route still logs the reading as finished.
 - When the server rejects the saved passphrase (it was changed), the app forgets it and asks again.
   Topics also has a Log out.
 
@@ -120,6 +139,9 @@ brief disagree, this file is newer.
   served, so its cost is still on record.
 - A text leaves the queue once a reading is logged for it, rated or not, so the same text is never
   served twice.
+- **Removing a topic** (press and hold it) hides it from the list and the background top-up. It's
+  a flag on the row, not a delete, since its texts and readings point at it. Adding a topic with the
+  same name brings it back, with any text it still had ready.
 
 ## Server API
 

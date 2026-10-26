@@ -3,9 +3,15 @@
 //
 // ==== Layout ====
 // NavBar, title, practice words, the Show English and highlight switches, the lines (each with its own replay
-// button), then a Done button, with the player bar pinned under the scroll view. "Done" swaps the
-// lines for the end view (rating, stats, words marked unknown). The gloss popover is a transparent
-// Modal, so a tap's page coordinates place it directly.
+// button, and an EN button that shows that line's English alone), then a Done button, with the
+// player bar pinned under the scroll view. "Done" swaps the lines for the end view (rating, stats,
+// words marked unknown). The gloss popover is a transparent Modal, so a tap's page coordinates
+// place it directly.
+//
+// ==== Listen only ====
+// Once a text is rated "About right", the end view offers to play it again with the Thai hidden
+// (docs/brief.md, design principle 6). The lines show who's speaking instead, the dialogue plays from
+// the start, and "Show the text" brings the words back. The reading is logged as listen-only.
 //
 // ==== Audio ====
 // One expo-audio player is reused for every line. "Play" runs the dialogue from the current line to
@@ -13,7 +19,8 @@
 // player's rate, with pitch kept, so each line is one file whatever the speed. The audio session
 // stays active between lines (`keepAudioSessionActive`): expo-audio otherwise drops it after each
 // line, and with the screen locked iOS can suspend the app before the next line starts. A line that
-// fails to load counts as finished, so "Play" moves on instead of stalling.
+// fails to load counts as finished, so "Play" moves on instead of stalling. Whenever the playing
+// line changes, the text scrolls to it if it's out of view (`scrollTarget` in follow.ts).
 //
 // ==== Loading ====
 // `/next` answers 202 while the server writes a text, so `load` asks again every few seconds.
@@ -46,17 +53,24 @@ import {
   TextButton,
 } from "../components/ui";
 import { countOutsideDeck, isOutsideDeck } from "../deckWords";
+import { type Box, scrollTarget } from "../follow";
 import { firstLine, nextLine } from "../playback";
 import { RATES } from "../playbackRate";
-import { formatDuration, heard, isFlagged, lookUp, type Session, startSession, toLog, toggleFlag } from "../session";
+import { prefs, savePrefs } from "../savedPrefs";
+import {
+  formatDuration,
+  heard,
+  isFlagged,
+  listenedOnly,
+  lookUp,
+  type Session,
+  startSession,
+  toLog,
+  toggleFlag,
+} from "../session";
 import { type Colors, font, radius, spacing, thaiFont, useColors } from "../theme";
 
 type Tapped = { word: Word; x: number; y: number };
-
-// The speed chosen last, and whether words outside the deck are highlighted, kept for the rest of
-// the app's run.
-let lastRate = 0.9;
-let lastHighlight = false;
 
 const POLL_MS = 3_000;
 // Three attempts and the audio rarely take more than two minutes; past this, something is wrong.
@@ -70,7 +84,10 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [english, setEnglish] = useState(false);
-  const [highlight, setHighlight] = useState(lastHighlight);
+  // Lines whose English was shown on their own, while Show English is off.
+  const [lineEnglish, setLineEnglish] = useState<number[]>([]);
+  const [listenOnly, setListenOnly] = useState(false);
+  const [highlight, setHighlight] = useState(prefs().highlight);
   const [tapped, setTapped] = useState<Tapped | null>(null);
   const [ended, setEnded] = useState(false);
   const [rating, setRating] = useState<Rating | null>(null);
@@ -90,8 +107,20 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   const status = useAudioPlayerStatus(player);
   const [current, setCurrent] = useState<number | null>(null);
   const [playingAll, setPlayingAll] = useState(false);
-  const [rate, setRate] = useState(lastRate);
+  const [rate, setRate] = useState(prefs().rate);
   const [silentLine, setSilentLine] = useState<number | null>(null);
+
+  const scroller = useRef<ScrollView>(null);
+  const lineBoxes = useRef<Box[]>([]);
+  const scrollY = useRef(0);
+  const viewHeight = useRef(0);
+
+  useEffect(() => {
+    const box = current === null ? undefined : lineBoxes.current[current];
+    if (!box || !viewHeight.current) return;
+    const y = scrollTarget(box, scrollY.current, viewHeight.current);
+    if (y !== null) scroller.current?.scrollTo({ y, animated: true });
+  }, [current]);
 
   function playLine(i: number, all: boolean) {
     if (!text) return;
@@ -118,7 +147,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   }
 
   function changeRate(next: number) {
-    lastRate = next;
+    savePrefs({ rate: next });
     setRate(next);
     player.setPlaybackRate(next, "high");
     if (status.playing) setSession((s) => (s ? heard(s, next) : s));
@@ -154,6 +183,10 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
     setEnded(false);
     setRating(null);
     setWriting(false);
+    setLineEnglish([]);
+    setListenOnly(false);
+    lineBoxes.current = [];
+    scrollY.current = 0;
     logged.current = false;
     try {
       const deadline = Date.now() + WRITE_WAIT_MS;
@@ -193,11 +226,13 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       }
       return;
     }
-    if (text && session && ended && !logged.current) {
+    // A listen-only pass is only offered after Done, so it counts as finished too.
+    const finished = ended || (session?.listenOnly ?? false);
+    if (text && session && finished && !logged.current) {
       logged.current = true;
       setLeaving(true);
       try {
-        await api.logReading(text.id, toLog(session, Date.now(), rating, ended));
+        await api.logReading(text.id, toLog(session, Date.now(), rating, true));
       } catch {
         // The reading is lost, not the user's place: carry on either way.
       } finally {
@@ -213,6 +248,20 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
     if (!session) return;
     setSession(lookUp(session, word.text));
     setTapped({ word, x, y });
+  }
+
+  function toggleLineEnglish(i: number) {
+    setLineEnglish((shown) => (shown.includes(i) ? shown.filter((n) => n !== i) : [...shown, i]));
+  }
+
+  function listenWithoutText() {
+    if (!text) return;
+    setSession((s) => (s ? listenedOnly(s) : s));
+    setListenOnly(true);
+    setEnded(false);
+    scrollY.current = 0; // the lines' scroll view is mounted fresh
+    const start = firstLine(text.lines);
+    if (start !== null) playLine(start, true);
   }
 
   const seconds = session ? Math.round((Date.now() - session.startedAt) / 1000) : 0;
@@ -231,7 +280,13 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       ) : null}
 
       {text && session && !ended ? (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          ref={scroller}
+          contentContainerStyle={styles.content}
+          onLayout={(e) => (viewHeight.current = e.nativeEvent.layout.height)}
+          onScroll={(e) => (scrollY.current = e.nativeEvent.contentOffset.y)}
+          scrollEventThrottle={100}
+        >
           <Text style={[styles.title, { color: c.text }]}>{text.title}</Text>
           {text.stretch.length > 0 ? (
             <View style={styles.practice}>
@@ -255,35 +310,48 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
               )}
             </View>
           ) : null}
-          <View style={styles.toggle}>
-            <Text style={[styles.toggleText, { color: c.textSecondary }]}>Show English</Text>
-            <Switch
-              value={english}
-              onValueChange={setEnglish}
-              trackColor={{ true: c.accent }}
-              accessibilityLabel="Show English"
-            />
-          </View>
-          <View style={[styles.toggle, styles.toggleNext]}>
-            <Text style={[styles.toggleText, { color: c.textSecondary }]}>Highlight words not in your deck</Text>
-            <Switch
-              value={highlight}
-              onValueChange={(on) => {
-                lastHighlight = on;
-                setHighlight(on);
-              }}
-              trackColor={{ true: c.accent }}
-              accessibilityLabel="Highlight words not in your deck"
-            />
-          </View>
-          {highlight && countOutsideDeck(text) === 0 ? (
-            <Text style={[styles.toggleNote, { color: c.textTertiary }]}>
-              Every word in this text is in your deck.
-            </Text>
-          ) : null}
+          {listenOnly ? (
+            <View style={styles.listenOnly}>
+              <Text style={[styles.toggleText, { color: c.textSecondary }]}>Listening without the text</Text>
+              <PillButton label="Show the text" quiet onPress={() => setListenOnly(false)} />
+            </View>
+          ) : (
+            <>
+              <View style={styles.toggle}>
+                <Text style={[styles.toggleText, { color: c.textSecondary }]}>Show English</Text>
+                <Switch
+                  value={english}
+                  onValueChange={setEnglish}
+                  trackColor={{ true: c.accent }}
+                  accessibilityLabel="Show English"
+                />
+              </View>
+              <View style={[styles.toggle, styles.toggleNext]}>
+                <Text style={[styles.toggleText, { color: c.textSecondary }]}>Highlight words not in your deck</Text>
+                <Switch
+                  value={highlight}
+                  onValueChange={(on) => {
+                    savePrefs({ highlight: on });
+                    setHighlight(on);
+                  }}
+                  trackColor={{ true: c.accent }}
+                  accessibilityLabel="Highlight words not in your deck"
+                />
+              </View>
+              {highlight && countOutsideDeck(text) === 0 ? (
+                <Text style={[styles.toggleNote, { color: c.textTertiary }]}>
+                  Every word in this text is in your deck.
+                </Text>
+              ) : null}
+            </>
+          )}
           {text.lines.map((line, i) => (
             <View
               key={i}
+              onLayout={(e) => {
+                const { y, height } = e.nativeEvent.layout;
+                lineBoxes.current[i] = { y, height };
+              }}
               style={[
                 styles.line,
                 { borderBottomColor: c.separator },
@@ -292,31 +360,61 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
             >
               <Text style={[styles.speaker, speakerColors(c, line.speaker)]}>{line.speaker}</Text>
               <View style={styles.lineBody}>
-                <View style={styles.words}>
-                  {line.words.map((word, j) => (
-                    <WordView
-                      key={j}
-                      word={word}
-                      flagged={isFlagged(session, word.text)}
-                      highlighted={highlight && isOutsideDeck(word)}
-                      selected={tapped?.word === word}
-                      onPress={tap}
-                    />
-                  ))}
-                </View>
-                {english ? <Text style={[styles.english, { color: c.textSecondary }]}>{line.english}</Text> : null}
+                {listenOnly ? (
+                  <Text style={[styles.hiddenLine, { color: c.textTertiary }]}>
+                    {text.roles[line.speaker] ?? `Line ${i + 1}`}
+                  </Text>
+                ) : (
+                  <View style={styles.words}>
+                    {line.words.map((word, j) => (
+                      <WordView
+                        key={j}
+                        word={word}
+                        flagged={isFlagged(session, word.text)}
+                        highlighted={highlight && isOutsideDeck(word)}
+                        selected={tapped?.word === word}
+                        onPress={tap}
+                      />
+                    ))}
+                  </View>
+                )}
+                {!listenOnly && (english || lineEnglish.includes(i)) ? (
+                  <Text style={[styles.english, { color: c.textSecondary }]}>{line.english}</Text>
+                ) : null}
               </View>
-              {line.audio ? (
-                <Pressable
-                  onPress={() => playLine(i, false)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Play line ${i + 1}`}
-                  hitSlop={6}
-                  style={[styles.replay, { backgroundColor: c.accentSubtle }]}
-                >
-                  <Text style={[styles.replayIcon, { color: c.accentText }]}>▶︎</Text>
-                </Pressable>
-              ) : null}
+              <View style={styles.lineButtons}>
+                {line.audio ? (
+                  <Pressable
+                    onPress={() => playLine(i, false)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Play line ${i + 1}`}
+                    hitSlop={6}
+                    style={[styles.replay, { backgroundColor: c.accentSubtle }]}
+                  >
+                    <Text style={[styles.replayIcon, { color: c.accentText }]}>▶︎</Text>
+                  </Pressable>
+                ) : null}
+                {!english && !listenOnly ? (
+                  <Pressable
+                    onPress={() => toggleLineEnglish(i)}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      lineEnglish.includes(i) ? `Hide English for line ${i + 1}` : `Show English for line ${i + 1}`
+                    }
+                    hitSlop={6}
+                    style={[
+                      styles.replay,
+                      { backgroundColor: lineEnglish.includes(i) ? c.accentSubtle : c.tertiary },
+                    ]}
+                  >
+                    <Text
+                      style={[styles.enLabel, { color: lineEnglish.includes(i) ? c.accentText : c.textSecondary }]}
+                    >
+                      EN
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
           ))}
           <View style={styles.doneButton}>
@@ -393,6 +491,12 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
               </Card>
               <Hint>Marked words are only saved for now. Nothing is added to Anki.</Hint>
             </>
+          ) : null}
+          {rating === "about_right" && firstLine(text.lines) !== null ? (
+            <View style={styles.listenAgain}>
+              <PillButton label="Listen without the text" onPress={listenWithoutText} />
+              <Hint>Plays the dialogue again with the Thai hidden.</Hint>
+            </View>
           ) : null}
           <View style={styles.endButtons}>
             <PrimaryButton label="Next text" onPress={() => finish("next")} busy={leaving} />
@@ -683,6 +787,18 @@ const styles = StyleSheet.create({
   thai: { fontSize: thaiFont, lineHeight: thaiFont * 1.75 },
   stretch: { fontWeight: "700" },
   english: { fontSize: 14, lineHeight: 18, marginTop: 2 },
+  hiddenLine: { fontSize: font.md, lineHeight: thaiFont * 1.75 },
+  lineButtons: { gap: spacing.xs },
+  enLabel: { fontSize: font.xs, fontWeight: "700" },
+  listenOnly: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  listenAgain: { alignItems: "center", paddingTop: spacing.sm },
   doneButton: { padding: spacing.md, paddingTop: spacing.lg },
   endCard: { padding: spacing.md, gap: spacing.sm },
   endTitle: { fontSize: 22, fontWeight: "700" },

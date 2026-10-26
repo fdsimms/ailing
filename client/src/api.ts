@@ -34,6 +34,25 @@ export type Settings = { stretch_words: StretchWords };
 
 export type Rating = "too_easy" | "about_right" | "too_hard";
 
+// Finished texts over the last `days` days (what the Milestone 1 exit check reads), and the
+// difficulty new texts are written at.
+export type Progress = {
+  days: number;
+  finished: number;
+  median_coverage: number | null;
+  ratings: Record<Rating | "none", number>;
+  next: { floor: number; stretch: number };
+};
+
+// A word marked unknown in a reading and not cleared since.
+export type MarkedWord = {
+  word: string;
+  gloss: string | null;
+  status: "known" | "partial" | "unknown";
+  times: number;
+  last_marked: string;
+};
+
 export type ReadingLog = {
   rating: Rating | null;
   finished: boolean;
@@ -92,6 +111,10 @@ export function createApi(
     addTopic: (name: string) => call<Topic>("POST", "/api/topics", { name, favorite: true }),
     setFavorite: (id: number, favorite: boolean) =>
       call<Topic>("PATCH", `/api/topics/${id}`, { favorite }),
+    removeTopic: (id: number) => call<void>("DELETE", `/api/topics/${id}`),
+    progress: () => call<Progress>("GET", "/api/progress"),
+    markedWords: () => call<MarkedWord[]>("GET", "/api/words"),
+    clearWord: (word: string) => call<void>("POST", "/api/words/clear", { word }),
     settings: () => call<Settings>("GET", "/api/settings"),
     updateSettings: (settings: Partial<Settings>) => call<Settings>("PATCH", "/api/settings", settings),
     // null while the server is still writing the text (202): ask again in a few seconds.

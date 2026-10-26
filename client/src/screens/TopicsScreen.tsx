@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,8 +11,9 @@ import {
   View,
 } from "react-native";
 
-import { type Api, ApiError, type StretchWords, type Topic } from "../api";
+import { type Api, ApiError, type Progress, type StretchWords, type Topic } from "../api";
 import { Card, ErrorNote, Hint, PillButton, SectionLabel, Segments, TextButton } from "../components/ui";
+import { describeProgress } from "../progress";
 import { font, radius, spacing, useColors } from "../theme";
 
 // While a favorite is still being written, check back this often.
@@ -20,10 +22,12 @@ const WRITING_POLL_MS = 10_000;
 export function TopicsScreen({
   api,
   onOpen,
+  onWords,
   onLogOut,
 }: {
   api: Api;
   onOpen: (topic: Topic) => void;
+  onWords: () => void;
   onLogOut: () => void;
 }) {
   const c = useColors();
@@ -35,6 +39,8 @@ export function TopicsScreen({
   const [addError, setAddError] = useState<string | null>(null);
   const [stretchWords, setStretchWords] = useState<StretchWords | null>(null);
   const [settingError, setSettingError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [markedCount, setMarkedCount] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -48,6 +54,18 @@ export function TopicsScreen({
   useEffect(() => {
     load();
   }, [load]);
+
+  // Loaded apart from the topics, and left out quietly if they fail.
+  const loadExtras = useCallback(async () => {
+    await Promise.all([
+      api.progress().then(setProgress, () => {}),
+      api.markedWords().then((ws) => setMarkedCount(ws.length), () => {}),
+    ]);
+  }, [api]);
+
+  useEffect(() => {
+    loadExtras();
+  }, [loadExtras]);
 
   // Loaded on its own, so the topics still show if this fails.
   useEffect(() => {
@@ -93,6 +111,23 @@ export function TopicsScreen({
     }
   }
 
+  function confirmRemove(topic: Topic) {
+    Alert.alert(`Remove ${topic.name}?`, "It leaves your list. Adding a topic with the same name brings it back.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Remove", style: "destructive", onPress: () => remove(topic) },
+    ]);
+  }
+
+  async function remove(topic: Topic) {
+    setTopics((ts) => ts?.filter((t) => t.id !== topic.id) ?? ts);
+    try {
+      await api.removeTopic(topic.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't remove that topic.");
+    }
+    await load();
+  }
+
   async function toggleFavorite(topic: Topic) {
     try {
       await api.setFavorite(topic.id, !topic.favorite);
@@ -115,7 +150,7 @@ export function TopicsScreen({
           refreshing={refreshing}
           onRefresh={async () => {
             setRefreshing(true);
-            await load();
+            await Promise.all([load(), loadExtras()]);
             setRefreshing(false);
           }}
         />
@@ -129,12 +164,21 @@ export function TopicsScreen({
       {error ? <ErrorNote message={error} onRetry={load} /> : null}
       {topics === null && !error ? <ActivityIndicator style={styles.loading} /> : null}
 
+      {progress ? <ProgressCard progress={progress} /> : null}
+
       {favorites.length > 0 ? (
         <>
           <SectionLabel>Favorites</SectionLabel>
           <Card>
             {favorites.map((t, i) => (
-              <TopicRow key={t.id} topic={t} first={i === 0} onOpen={onOpen} onStar={toggleFavorite} />
+              <TopicRow
+                key={t.id}
+                topic={t}
+                first={i === 0}
+                onOpen={onOpen}
+                onStar={toggleFavorite}
+                onRemove={confirmRemove}
+              />
             ))}
           </Card>
         </>
@@ -145,12 +189,20 @@ export function TopicsScreen({
           <SectionLabel>Other topics</SectionLabel>
           <Card>
             {others.map((t, i) => (
-              <TopicRow key={t.id} topic={t} first={i === 0} onOpen={onOpen} onStar={toggleFavorite} />
+              <TopicRow
+                key={t.id}
+                topic={t}
+                first={i === 0}
+                onOpen={onOpen}
+                onStar={toggleFavorite}
+                onRemove={confirmRemove}
+              />
             ))}
           </Card>
           <Hint>Opening a topic with no text ready takes about half a minute.</Hint>
         </>
       ) : null}
+      {topics && topics.length > 0 ? <Hint>Press and hold a topic to remove it.</Hint> : null}
 
       <SectionLabel>New topic</SectionLabel>
       <View style={[styles.field, { backgroundColor: c.card }]}>
@@ -167,6 +219,21 @@ export function TopicsScreen({
       </View>
       {addError ? <ErrorNote message={addError} /> : null}
       <Hint>New topics start as favorites, so a text is written for them right away.</Hint>
+      <SectionLabel>Your words</SectionLabel>
+      <Card>
+        <Pressable
+          onPress={onWords}
+          accessibilityRole="button"
+          accessibilityLabel={markedCount === null ? "Marked words" : `Marked words, ${markedCount}`}
+          style={({ pressed }) => [styles.rowBody, styles.wordsRow, { opacity: pressed ? 0.7 : 1 }]}
+        >
+          <Text style={[styles.name, { color: c.text }]}>Marked words</Text>
+          {markedCount !== null ? (
+            <Text style={[styles.writingText, { color: c.textSecondary }]}>{markedCount}</Text>
+          ) : null}
+          <Text style={[styles.chevron, { color: c.textTertiary }]}>›</Text>
+        </Pressable>
+      </Card>
       {stretchWords ? (
         <>
           <SectionLabel>Stretch words</SectionLabel>
@@ -190,16 +257,35 @@ export function TopicsScreen({
   );
 }
 
+function ProgressCard({ progress }: { progress: Progress }) {
+  const c = useColors();
+  const { headline, detail, next } = describeProgress(progress);
+  return (
+    <>
+      <SectionLabel>Progress</SectionLabel>
+      <Card>
+        <View style={styles.progress}>
+          <Text style={[styles.progressHeadline, { color: c.text }]}>{headline}</Text>
+          <Text style={[styles.progressDetail, { color: c.textSecondary }]}>{detail}</Text>
+          <Text style={[styles.progressNext, { color: c.textTertiary }]}>{next}</Text>
+        </View>
+      </Card>
+    </>
+  );
+}
+
 function TopicRow({
   topic,
   first,
   onOpen,
   onStar,
+  onRemove,
 }: {
   topic: Topic;
   first: boolean;
   onOpen: (t: Topic) => void;
   onStar: (t: Topic) => void;
+  onRemove: (t: Topic) => void;
 }) {
   const c = useColors();
   const state = STATE_TEXT[topic.state];
@@ -218,6 +304,9 @@ function TopicRow({
       </Pressable>
       <Pressable
         onPress={() => onOpen(topic)}
+        onLongPress={() => onRemove(topic)}
+        accessibilityActions={[{ name: "remove", label: "Remove topic" }]}
+        onAccessibilityAction={(e) => e.nativeEvent.actionName === "remove" && onRemove(topic)}
         accessibilityRole="button"
         accessibilityLabel={state ? `${topic.name}, ${state}` : topic.name}
         accessibilityHint="Opens a text on this topic"
@@ -298,4 +387,9 @@ const styles = StyleSheet.create({
   adding: { marginHorizontal: spacing.smd },
   segments: { marginHorizontal: spacing.md },
   logOut: { marginTop: spacing.lg },
+  wordsRow: { paddingLeft: spacing.md },
+  progress: { padding: spacing.md, gap: spacing.xs },
+  progressHeadline: { fontSize: font.lg, fontWeight: "600" },
+  progressDetail: { fontSize: font.md, lineHeight: 21 },
+  progressNext: { fontSize: font.sm, lineHeight: 18 },
 });

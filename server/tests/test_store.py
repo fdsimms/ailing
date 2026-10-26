@@ -135,3 +135,47 @@ def test_a_database_from_before_roles_gains_the_column(tmp_path) -> None:  # typ
     first.close()
     columns = {r[1] for r in connect(path).execute("PRAGMA table_info(texts)")}
     assert "roles" in columns
+
+
+def test_a_word_marked_again_after_clearing_is_listed_again(conn) -> None:  # type: ignore[no-untyped-def]
+    from scripted import GOOD
+
+    from ailing.coverage import check
+    from ailing.generator import Generated, Line
+    from ailing.lexicon import lexicon_from
+    from ailing.store import Reading, clear_word, log_reading, marked_words
+
+    topic = add_topic(conn, "Food", True, NOW)
+    lines = tuple(Line(ln["speaker"], ln["text"], ln["english"]) for ln in GOOD["lines"])
+    coverage = check([ln.text for ln in lines], lexicon_from(OLD))
+    generated = Generated("t", lines, {"ทอน": "change"}, coverage, 1, True, ())
+
+    def reading_at(at: datetime) -> None:
+        text_id = save_text(conn, topic.id, generated, [], 0.95, at)
+        log_reading(conn, text_id, Reading(None, True, (), ("ทอน",), None, False, 10), at)
+
+    reading_at(NOW)
+    clear_word(conn, "ทอน", NOW + timedelta(minutes=1))
+    assert marked_words(conn) == []
+
+    reading_at(NOW + timedelta(days=1))
+    [word] = marked_words(conn)
+    assert (word.word, word.times, word.glosses["ทอน"]) == ("ทอน", 1, "change")
+
+
+def test_a_database_from_before_removing_topics_gains_the_column(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE topics (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,"
+        " favorite INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)"
+    )
+    old.execute("INSERT INTO topics (name, created_at) VALUES ('Taxi', '2026-10-19')")
+    old.commit()
+    old.close()
+
+    from ailing.store import list_topics
+
+    assert [t.name for t in list_topics(connect(path))] == ["Taxi"]
