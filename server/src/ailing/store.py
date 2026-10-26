@@ -102,6 +102,8 @@ class StoredText:
     roles: dict[str, str] = field(default_factory=dict)
     form: Form = "dialogue"
     language: Code = "th"
+    # {"practice": [point ids], "avoid": [point ids]}, as asked for when it was written
+    grammar: dict[str, list[str]] = field(default_factory=dict)
 
 
 # "topic": the model chooses stretch words that fit the topic from a list of due and young words.
@@ -145,6 +147,9 @@ def connect(path: Path | str) -> sqlite3.Connection:
         if "language" not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             # Everything from before Spanish is Thai.
             conn.execute(f"ALTER TABLE {table} ADD COLUMN language TEXT NOT NULL DEFAULT 'th'")
+    if "grammar" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
+        # The grammar a text was written to practice and avoid; none before grammar choices.
+        conn.execute("ALTER TABLE texts ADD COLUMN grammar TEXT NOT NULL DEFAULT '{}'")
     if "form" not in {r[1] for r in conn.execute("PRAGMA table_info(texts)")}:
         # Every text written before stories was a dialogue.
         conn.execute("ALTER TABLE texts ADD COLUMN form TEXT NOT NULL DEFAULT 'dialogue'")
@@ -296,6 +301,7 @@ def save_text(
     status: str = "ready",
     form: Form = "dialogue",
     language: Code = "th",
+    grammar: dict[str, list[str]] | None = None,
 ) -> int:
     """Stores a generated text. `status` is "pending" while its audio is made, "ready" once it can
     be served, or "dropped" for a text that missed the floor (kept only for its cost)."""
@@ -304,8 +310,8 @@ def save_text(
         cur = conn.execute(
             """INSERT INTO texts (topic_id, created_at, status, title, lines, glosses, stretch,
                    coverage, token_count, floor, attempts, model, input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens, cost_usd, roles, form, language)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   cache_read_tokens, cache_write_tokens, cost_usd, roles, form, language, grammar)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 topic_id,
                 now.isoformat(),
@@ -327,6 +333,7 @@ def save_text(
                 json.dumps(generated.roles, ensure_ascii=False),
                 form,
                 language,
+                json.dumps(grammar or {}),
             ),
         )
     assert cur.lastrowid is not None
@@ -359,11 +366,15 @@ def get_text(conn: sqlite3.Connection, text_id: int) -> StoredText | None:
     return _text(row) if row else None
 
 
-_TEXT_COLUMNS = "id, topic_id, title, lines, glosses, stretch, coverage, roles, form, language"
+_TEXT_COLUMNS = (
+    "id, topic_id, title, lines, glosses, stretch, coverage, roles, form, language, grammar"
+)
 
 
 def _text(row: tuple[Any, ...]) -> StoredText:
-    text_id, topic_id, title, lines, glosses, stretch, coverage, roles, form, language = row
+    text_id, topic_id, title, lines, glosses, stretch, coverage, roles, form, language, grammar = (
+        row
+    )
     return StoredText(
         id=text_id,
         topic_id=topic_id,
@@ -375,6 +386,7 @@ def _text(row: tuple[Any, ...]) -> StoredText:
         roles=json.loads(roles),
         form=form,
         language=language,
+        grammar=json.loads(grammar),
     )
 
 
@@ -530,6 +542,28 @@ def save_difficulty(
 ) -> None:
     with conn:
         _set_meta(conn, _per_language("difficulty", language), json.dumps(difficulty.__dict__))
+
+
+# ==== Grammar ====
+
+GrammarState = Literal["practice", "avoid", "normal"]
+
+
+def load_grammar(conn: sqlite3.Connection) -> dict[str, GrammarState]:
+    """The owner's grammar choices for every language, by point id. A point that isn't listed is
+    normal: neither asked for nor kept out."""
+    raw = _get_meta(conn, "grammar")
+    return json.loads(raw) if raw else {}
+
+
+def set_grammar(conn: sqlite3.Connection, point_id: str, state: GrammarState) -> None:
+    choices = load_grammar(conn)
+    if state == "normal":
+        choices.pop(point_id, None)
+    else:
+        choices[point_id] = state
+    with conn:
+        _set_meta(conn, "grammar", json.dumps(choices))
 
 
 # ==== Settings ====

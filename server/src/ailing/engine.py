@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from ailing import store
+from ailing import grammar, store
 from ailing.coverage import Checker, parse_line
 from ailing.difficulty import Difficulty, adapt
 from ailing.gateway import CallTool
@@ -64,6 +64,10 @@ class _Failure:
 
 
 _Key = tuple[int, Code]  # a topic and a language
+
+
+def _grammar_record(request: TextRequest) -> dict[str, list[str]]:
+    return {"practice": list(request.practice), "avoid": list(request.avoid)}
 
 
 class Engine:
@@ -219,6 +223,7 @@ class Engine:
                     "dropped",
                     request.form,
                     language,
+                    _grammar_record(request),
                 )
                 log.warning(
                     "Dropped a %s %r text at %.1f%% after %d attempts ($%.4f)",
@@ -248,6 +253,7 @@ class Engine:
                 "pending",
                 request.form,
                 language,
+                _grammar_record(request),
             )
             text = store.get_text(self.conn, text_id)
             assert text is not None
@@ -266,6 +272,10 @@ class Engine:
         settings = store.load_settings(self.conn)
         start_of_today = self.clock().replace(hour=0, minute=0, second=0, microsecond=0)
         practiced = store.practiced_days(self.conn, start_of_today, language)
+        chosen = store.load_grammar(self.conn)
+        mine = [p.id for p in grammar.points_for(language)]
+        practice = tuple(p for p in mine if chosen.get(p) == "practice")
+        avoid = tuple(p for p in mine if chosen.get(p) == "avoid")
 
         def request(stretch: list[Entry], choose: int | None = None) -> TextRequest:
             return TextRequest(
@@ -276,6 +286,8 @@ class Engine:
                 choose=choose,
                 form=settings.form,
                 language=language,
+                practice=practice,
+                avoid=avoid,
             )
 
         if settings.stretch_words == "any":

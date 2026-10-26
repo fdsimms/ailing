@@ -24,6 +24,7 @@ import {
   type Topic,
 } from "../api";
 import { Card, ErrorNote, Hint, PillButton, SectionLabel, Segments, TextButton } from "../components/ui";
+import { grammarSummary } from "../grammar";
 import { ideaPage } from "../ideas";
 import { LANGUAGE_ORDER, LANGUAGES } from "../languages";
 import { describeProgress } from "../progress";
@@ -37,12 +38,14 @@ export function TopicsScreen({
   onOpen,
   onWords,
   onPast,
+  onGrammar,
   onLogOut,
 }: {
   api: Api;
   onOpen: (topic: Topic) => void;
   onWords: () => void;
   onPast: () => void;
+  onGrammar: () => void;
   onLogOut: () => void;
 }) {
   const c = useColors();
@@ -56,6 +59,7 @@ export function TopicsScreen({
   const [settingError, setSettingError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [markedCount, setMarkedCount] = useState<number | null>(null);
+  const [grammar, setGrammar] = useState<string | null>(null);
   const [ideas, setIdeas] = useState<Suggestion[]>([]);
   const [ideaPageIndex, setIdeaPageIndex] = useState(0);
   const [opening, setOpening] = useState<string | null>(null);
@@ -79,6 +83,7 @@ export function TopicsScreen({
       api.progress().then(setProgress, () => {}),
       api.markedWords().then((ws) => setMarkedCount(ws.length), () => {}),
       api.suggestions().then(setIdeas, () => {}),
+      api.grammar().then((g) => setGrammar(grammarSummary(g.points)), () => {}),
     ]);
   }, [api]);
 
@@ -330,6 +335,20 @@ export function TopicsScreen({
       </Card>
       {settings ? (
         <>
+          <SectionLabel>Grammar</SectionLabel>
+          <Card>
+            <Pressable
+              onPress={onGrammar}
+              accessibilityRole="button"
+              accessibilityLabel={grammar ? `Grammar, ${grammar}` : "Grammar"}
+              accessibilityHint="Choose grammar to practice or avoid"
+              style={({ pressed }) => [styles.rowBody, styles.wordsRow, { opacity: pressed ? 0.7 : 1 }]}
+            >
+              <Text style={[styles.name, { color: c.text }]}>Practice or avoid</Text>
+              {grammar ? <Text style={[styles.writingText, { color: c.textSecondary }]}>{grammar}</Text> : null}
+              <Text style={[styles.chevron, { color: c.textTertiary }]}>›</Text>
+            </Pressable>
+          </Card>
           <SectionLabel>Text type</SectionLabel>
           <Segments<Form>
             style={styles.segments}

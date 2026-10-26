@@ -146,6 +146,37 @@ and of Milestone 3 where the brief put it. Mining is still not built. Thai works
   Spanish equally, so Spanish keeps the listed order.
 - The reading log names the language as before (`thai`, now also `spanish`).
 
+## Grammar
+
+Added on 26 October 2026 at the owner's request: grammar to practice or avoid, for each language.
+
+- **Points** (`server/src/ailing/grammar.py`). Spanish: preterite, imperfect, present perfect,
+  pluperfect, future, conditional, progressive, present subjunctive, imperfect subjunctive (the
+  present is always allowed). Thai: เคย, กำลัง, จะ, แล้ว, ต้อง, กว่า, ที่สุด, ถ้า, เพราะ, and yes or no
+  questions (ไหม, หรือเปล่า). Each is **practice** (used at least twice in each text), **avoid**
+  (left out, for grammar not learned yet) or **normal**. At most 2 are practiced at once, so texts
+  stay natural; avoiding has no limit. The choices are stored together for both languages and
+  apply from the next text written (`GET /api/grammar`, `PUT /api/grammar/{id}`).
+- **Generate, then verify, as for coverage.** The request names the points to practice and avoid,
+  and the server finds them in the draft. A practiced point used fewer than twice, or an avoided one
+  used at all, sends the draft back with the words named ("Don't use the Preterite; this draft has:
+  hablé, dijo"). Among attempts that all miss, the closest kept is the one with the fewest grammar
+  misses (uses short of a practiced point, plus uses of an avoided one), then the highest coverage;
+  it's served if it's at 90% or more, like any closest attempt, so a slip is possible but rare.
+- **Finding points.** Thai points are words, matched on the coverage segmentation; the segmenter
+  sometimes joins one onto the next word (กำลังกิน), so a word starting with the point counts, with
+  listed look-alikes left out (ต้องการ, "want", isn't ต้อง, "must"). Spanish points are verb forms,
+  found from their endings, with simplemma confirming the word is a form of a verb, plus lists of
+  irregular forms. That's close but not perfect, on purpose: a form shared by two tenses counts as
+  neither (hablamos is "we speak" and "we spoke"), words that are also nouns are left out (vino is
+  "wine", fuera is also "outside"), and a rare irregular form can be missed. A full parser (spaCy)
+  would be more exact but adds about 100 MB to a server already near 334 of its 512 MB.
+- **In the reader**, a text's practiced points show as chips under its practice words, and their
+  words are underlined solid; a word using an avoided point that slipped in is underlined dashed.
+  Tapping either explains the grammar.
+- Each text records the grammar it was asked for (`texts.grammar`), so the log shows what each
+  text practiced.
+
 ## Generation and coverage
 
 - **The server re-segments every line.** The model's `|` breaks are not trusted for coverage: the
