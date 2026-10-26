@@ -35,8 +35,8 @@ brief disagree, this file is newer.
   locked or in another app. That was the main thing a web app couldn't do well.
 - The server's address is plain build config: `EXPO_PUBLIC_API_URL` in `client/eas.json`, inlined at
   build time. It has to match the Fly app's name (`server/fly.toml`). Nothing secret ships in the app.
-- Four screens (login, topics, reader, marked words) switched by state in `App.tsx`, with no
-  navigation library. The reader shows the server's word split as tappable words: a tap shows the
+- Five screens (login, topics, reader, past texts, marked words) switched by state in `App.tsx`,
+  with no navigation library. The reader shows the server's word split as tappable words: a tap shows the
   gloss, and marking a word unknown is a second tap inside the gloss, so looking up a half-known
   word doesn't also flag it.
 - Each line has an EN button that shows that line's English alone, so checking one line doesn't
@@ -46,6 +46,13 @@ brief disagree, this file is newer.
   text" brings the words back. The reading is then logged with `listen_only` true. The brief's
   "unlocks for a text" is read as "for the text just rated", since a text is never served twice.
 - While audio plays, the text scrolls to keep the line being spoken in view.
+- **Repeat line** in the player plays the current line over and over, for shadowing, until it's
+  turned off.
+- **Past texts**: texts read to the end, newest first (the last 50), opened in the same reader to
+  read or listen to again. Reading one again isn't logged: the log is one row per text, and a reread
+  shouldn't count toward the exit check or move difficulty. So there's no Done or rating, and words
+  can be looked up but not marked unknown. One rated "About right" can be played listen-only straight
+  away, since that's when the brief unlocks it.
 - The reader's playback speed and the highlight switch are kept between launches, in the keychain
   next to the passphrase (`client/src/savedPrefs.ts`), so no new native module was needed.
 - **Progress** on the topics screen: finished texts over the last 14 days against the Milestone 1
@@ -109,6 +116,13 @@ brief disagree, this file is newer.
   lexicon in the same response, so tap-to-gloss never needs its own API call. Lexicon words use the
   deck's `Meaning`.
 - **Stretch words** are 1-3 words due today or still young. No random assignment.
+- **Stretch words come back on later days** (brief, design principle 4). A word that was a stretch
+  word in a text read on an earlier day goes ahead of other due and young words, until it has been
+  one on 3 different days (`RETURN_DAYS` in `server/src/ailing/stretch.py`). It still has to be due
+  or young, so a word that has matured since is left alone. In "Fit the topic" it's offered first,
+  and the model may still pass it over if it doesn't fit.
+- **Dialogue length** is a setting: 6, 8 or 12 lines (`lines` in `/api/settings`), applying from the
+  next text written. Longer dialogues have more room for unknown words before missing the floor.
 - **The model chooses stretch words to fit the topic** (the default). It gets 15 due or young
   words and uses 1 to the current stretch count of them, so a dialogue about ordering food isn't
   bent around "tiger" because tiger happens to be due. The text records the ones it used. A text

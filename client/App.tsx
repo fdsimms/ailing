@@ -1,19 +1,22 @@
-// Four screens and no navigation library: login, topics, the reader for one topic, and the words
-// marked unknown.
+// Screens switched by state, with no navigation library: login, topics, the reader (a new text on a
+// topic, or a past text again), past texts, and the words marked unknown.
 import { setAudioModeAsync } from "expo-audio";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { createApi, type Topic } from "./src/api";
+import { createApi } from "./src/api";
 import { clearPassphrase, loadPassphrase, serverUrl } from "./src/passphrase";
 import { loadPrefs } from "./src/savedPrefs";
 import { LoginScreen } from "./src/screens/LoginScreen";
-import { ReaderScreen } from "./src/screens/ReaderScreen";
+import { PastTextsScreen } from "./src/screens/PastTextsScreen";
+import { ReaderScreen, type ReaderSource } from "./src/screens/ReaderScreen";
 import { TopicsScreen } from "./src/screens/TopicsScreen";
 import { WordsScreen } from "./src/screens/WordsScreen";
 import { useColors } from "./src/theme";
+
+type Route = { kind: "topics" } | { kind: "words" } | { kind: "past" } | { kind: "reader"; source: ReaderSource };
 
 export default function App() {
   return (
@@ -26,15 +29,13 @@ export default function App() {
 function Root() {
   const c = useColors();
   const [passphrase, setPassphrase] = useState<string | null | undefined>(undefined);
-  const [topic, setTopic] = useState<Topic | null>(null);
-  const [words, setWords] = useState(false);
+  const [view, setView] = useState<Route>({ kind: "topics" });
   const [notice, setNotice] = useState<string | null>(null);
   const url = serverUrl();
 
   function logOut(reason: string | null) {
     clearPassphrase().catch(() => {});
-    setTopic(null);
-    setWords(false);
+    setView({ kind: "topics" });
     setNotice(reason);
     setPassphrase(null);
   }
@@ -62,11 +63,28 @@ function Root() {
   let screen;
   if (passphrase === undefined) screen = <ActivityIndicator style={styles.loading} />;
   else if (!api) screen = <LoginScreen notice={notice} onLoggedIn={setPassphrase} />;
-  else if (topic) screen = <ReaderScreen api={api} topic={topic} onBack={() => setTopic(null)} />;
-  else if (words) screen = <WordsScreen api={api} onBack={() => setWords(false)} />;
+  else if (view.kind === "reader") {
+    const source = view.source;
+    const back = () => setView({ kind: source.kind === "past" ? "past" : "topics" });
+    screen = <ReaderScreen api={api} source={source} onBack={back} />;
+  } else if (view.kind === "words") screen = <WordsScreen api={api} onBack={() => setView({ kind: "topics" })} />;
+  else if (view.kind === "past")
+    screen = (
+      <PastTextsScreen
+        api={api}
+        onOpen={(text) => setView({ kind: "reader", source: { kind: "past", text } })}
+        onBack={() => setView({ kind: "topics" })}
+      />
+    );
   else
     screen = (
-      <TopicsScreen api={api} onOpen={setTopic} onWords={() => setWords(true)} onLogOut={() => logOut(null)} />
+      <TopicsScreen
+        api={api}
+        onOpen={(topic) => setView({ kind: "reader", source: { kind: "topic", topic } })}
+        onWords={() => setView({ kind: "words" })}
+        onPast={() => setView({ kind: "past" })}
+        onLogOut={() => logOut(null)}
+      />
     );
 
   return (
