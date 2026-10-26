@@ -335,3 +335,19 @@ def test_past_texts_lists_texts_read_to_the_end_and_serves_them_again() -> None:
     assert [w["text"] for w in again["lines"][0]["words"]][:3] == ["ฉัน", "อยาก", "กิน"]
     assert c.get("/api/texts/999", headers=AUTH).status_code == 404
     assert c.get("/api/texts").status_code == 401
+
+
+def test_suggestions_leave_out_topics_already_added_or_removed() -> None:
+    c = client()
+    first = c.get("/api/suggestions", headers=AUTH).json()
+    assert {"name", "fit"} <= set(first[0])
+
+    taken = c.post("/api/topics", json={"name": first[0]["name"]}, headers=AUTH).json()
+    removed = c.post("/api/topics", json={"name": first[1]["name"]}, headers=AUTH).json()
+    c.delete(f"/api/topics/{removed['id']}", headers=AUTH)
+
+    names = [s["name"] for s in c.get("/api/suggestions", headers=AUTH).json()]
+    assert taken["name"] not in names
+    assert removed["name"] not in names
+    assert len(names) == len(first) - 2
+    assert c.get("/api/suggestions").status_code == 401

@@ -234,6 +234,11 @@ def set_favorite(conn: sqlite3.Connection, topic_id: int, favorite: bool) -> Top
     return get_topic(conn, topic_id)
 
 
+def topic_names(conn: sqlite3.Connection) -> set[str]:
+    """Every topic's name, removed ones included."""
+    return {name for (name,) in conn.execute("SELECT name FROM topics")}
+
+
 def remove_topic(conn: sqlite3.Connection, topic_id: int) -> bool:
     """Hides a topic from the list and the background top-up. Returns whether there was one."""
     with conn:
