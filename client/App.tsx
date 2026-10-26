@@ -10,13 +10,19 @@ import { createApi } from "./src/api";
 import { clearPassphrase, loadPassphrase, serverUrl } from "./src/passphrase";
 import { loadPrefs } from "./src/savedPrefs";
 import { LoginScreen } from "./src/screens/LoginScreen";
+import { GrammarScreen } from "./src/screens/GrammarScreen";
 import { PastTextsScreen } from "./src/screens/PastTextsScreen";
 import { ReaderScreen, type ReaderSource } from "./src/screens/ReaderScreen";
 import { TopicsScreen } from "./src/screens/TopicsScreen";
 import { WordsScreen } from "./src/screens/WordsScreen";
 import { useColors } from "./src/theme";
 
-type Route = { kind: "topics" } | { kind: "words" } | { kind: "past" } | { kind: "reader"; source: ReaderSource };
+type Route =
+  | { kind: "topics" }
+  | { kind: "words" }
+  | { kind: "past" }
+  | { kind: "grammar" }
+  | { kind: "reader"; source: ReaderSource };
 
 export default function App() {
   return (
@@ -68,6 +74,7 @@ function Root() {
     const back = () => setView({ kind: source.kind === "past" ? "past" : "topics" });
     screen = <ReaderScreen api={api} source={source} onBack={back} />;
   } else if (view.kind === "words") screen = <WordsScreen api={api} onBack={() => setView({ kind: "topics" })} />;
+  else if (view.kind === "grammar") screen = <GrammarScreen api={api} onBack={() => setView({ kind: "topics" })} />;
   else if (view.kind === "past")
     screen = (
       <PastTextsScreen
@@ -83,6 +90,7 @@ function Root() {
         onOpen={(topic) => setView({ kind: "reader", source: { kind: "topic", topic } })}
         onWords={() => setView({ kind: "words" })}
         onPast={() => setView({ kind: "past" })}
+        onGrammar={() => setView({ kind: "grammar" })}
         onLogOut={() => logOut(null)}
       />
     );

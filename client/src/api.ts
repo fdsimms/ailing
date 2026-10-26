@@ -13,7 +13,16 @@ export type Word = {
   gloss: string | null;
   stretch: boolean;
   deck: boolean; // a deck word, as against one known for being common (Spanish)
+  grammar: string | null; // the grammar point this word uses, if the text practices or avoids it
 };
+
+// Practice: used at least twice in each text. Avoid: kept out. Normal: neither.
+export type GrammarState = "practice" | "avoid" | "normal";
+
+export type GrammarPoint = { id: string; name: string; note: string; state: GrammarState };
+
+// A grammar point a text was written to practice or avoid.
+export type TextGrammar = { id: string; name: string; note: string; role: "practice" | "avoid" };
 
 // The languages texts are written in. Topics are shared; the rest is per language.
 export type Language = "th" | "es";
@@ -33,6 +42,7 @@ export type ReaderText = {
   roles: Partial<Record<"A" | "B", string>>; // who each speaker is; empty for older texts and stories
   form: Form;
   language: Language;
+  grammar: TextGrammar[];
   lines: TextLine[];
 };
 
@@ -143,6 +153,9 @@ export function createApi(
     removeTopic: (id: number) => call<void>("DELETE", `/api/topics/${id}`),
     progress: () => call<Progress>("GET", "/api/progress"),
     markedWords: () => call<MarkedWord[]>("GET", "/api/words"),
+    grammar: () => call<{ max_practice: number; points: GrammarPoint[] }>("GET", "/api/grammar"),
+    setGrammar: (id: string, state: GrammarState) =>
+      call<{ max_practice: number; points: GrammarPoint[] }>("PUT", `/api/grammar/${id}`, { state }),
     clearWord: (word: string) => call<void>("POST", "/api/words/clear", { word }),
     settings: () => call<Settings>("GET", "/api/settings"),
     updateSettings: (settings: Partial<Settings>) => call<Settings>("PATCH", "/api/settings", settings),

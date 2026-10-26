@@ -45,7 +45,16 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { type Api, ApiError, type PastText, type Rating, type ReaderText, type Topic, type Word } from "../api";
+import {
+  type Api,
+  ApiError,
+  type PastText,
+  type Rating,
+  type ReaderText,
+  type TextGrammar,
+  type Topic,
+  type Word,
+} from "../api";
 import {
   Card,
   ErrorNote,
@@ -327,6 +336,16 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
               ))}
             </View>
           ) : null}
+          {practicedGrammar(text).length > 0 ? (
+            <View style={styles.practice}>
+              <Text style={[styles.practiceLabel, { color: c.textSecondary }]}>Grammar:</Text>
+              {practicedGrammar(text).map((g) => (
+                <Text key={g.id} style={[styles.chip, { backgroundColor: c.speakerB, color: c.speakerBText }]}>
+                  {g.name}
+                </Text>
+              ))}
+            </View>
+          ) : null}
           {text.roles.A || text.roles.B ? (
             <View style={styles.roles}>
               {(["A", "B"] as const).map((who) =>
@@ -427,6 +446,7 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                         key={j}
                         word={word}
                         textStyle={readStyle(text)}
+                        grammar={grammarOf(text, word)}
                         flagged={isFlagged(session, word.text)}
                         highlighted={highlight && isOutsideDeck(word)}
                         selected={tapped?.word === word}
@@ -569,6 +589,7 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
 
       <GlossPopover
         tapped={tapped}
+        grammar={tapped && text ? grammarOf(text, tapped.word) : null}
         flagged={tapped && session ? isFlagged(session, tapped.word.text) : false}
         onToggleFlag={
           review ? null : () => tapped && session && setSession(toggleFlag(session, tapped.word.text))
@@ -591,6 +612,15 @@ function readStyle(text: ReaderText) {
   return { fontSize: info.fontSize, lineHeight: info.fontSize * info.lineHeight };
 }
 
+// `grammar` is missing from a server older than grammar choices.
+function practicedGrammar(text: ReaderText): TextGrammar[] {
+  return (text.grammar ?? []).filter((g) => g.role === "practice");
+}
+
+function grammarOf(text: ReaderText, word: Word): TextGrammar | null {
+  return word.grammar ? ((text.grammar ?? []).find((g) => g.id === word.grammar) ?? null) : null;
+}
+
 function speakerColors(c: Colors, who: "A" | "B") {
   return who === "A"
     ? { backgroundColor: c.accentSubtle, color: c.accentText }
@@ -604,6 +634,7 @@ function glossFor(text: ReaderText, word: string): string | null {
 
 function WordView({
   word,
+  grammar,
   textStyle,
   flagged,
   highlighted,
@@ -611,6 +642,7 @@ function WordView({
   onPress,
 }: {
   word: Word;
+  grammar: TextGrammar | null;
   textStyle: { fontSize: number; lineHeight: number };
   flagged: boolean;
   highlighted: boolean;
@@ -633,6 +665,7 @@ function WordView({
       accessibilityLabel={[
         word.text,
         word.stretch && "practice word",
+        grammar && grammar.name,
         highlighted && "not in your deck",
         flagged && "marked unknown",
       ]
@@ -650,6 +683,13 @@ function WordView({
           textStyle,
           { color: word.stretch ? c.accentText : c.text },
           word.stretch && styles.stretch,
+          // Grammar is underlined solid when practiced, dashed when it slipped in while avoided;
+          // a practice word's or a marked word's dotted underline takes its place.
+          grammar && {
+            textDecorationLine: "underline",
+            textDecorationStyle: grammar.role === "practice" ? "solid" : "dashed",
+            textDecorationColor: grammar.role === "practice" ? c.speakerBText : c.textTertiary,
+          },
           (word.stretch || flagged) && {
             textDecorationLine: "underline",
             textDecorationStyle: "dotted",
@@ -669,11 +709,13 @@ const POPOVER_GAP = 28;
 
 function GlossPopover({
   tapped,
+  grammar,
   flagged,
   onToggleFlag,
   onClose,
 }: {
   tapped: Tapped | null;
+  grammar: TextGrammar | null;
   flagged: boolean;
   onToggleFlag: (() => void) | null; // null when marking isn't recorded (reading a past text)
   onClose: () => void;
@@ -708,6 +750,13 @@ function GlossPopover({
         <Text style={[styles.popWord, { color: c.text }]}>{tapped.word.text}</Text>
         <Text style={[styles.popGloss, { color: c.text }]}>{tapped.word.gloss ?? "No meaning available"}</Text>
         <Text style={[styles.popStatus, { color: c.textSecondary }]}>{status}</Text>
+        {grammar ? (
+          <Text style={[styles.popGrammar, { color: c.textSecondary }]}>
+            {grammar.role === "practice"
+              ? `Grammar you're practicing: ${grammar.name}. ${grammar.note}.`
+              : `${grammar.name}, which you're avoiding, slipped in here. ${grammar.note}.`}
+          </Text>
+        ) : null}
         {onToggleFlag ? (
           <View style={styles.popActions}>
             <PillButton label={flagged ? "Unmark" : "Mark as unknown"} onPress={onToggleFlag} />
@@ -952,6 +1001,7 @@ const styles = StyleSheet.create({
   },
   popWord: { fontSize: font.xxl, fontWeight: "700" },
   popGloss: { fontSize: font.lg, marginTop: 2 },
+  popGrammar: { fontSize: font.sm, marginTop: 6, lineHeight: 18 },
   popStatus: { fontSize: font.sm, marginTop: 6 },
   popActions: { flexDirection: "row", gap: spacing.sm, marginTop: 14 },
 });
