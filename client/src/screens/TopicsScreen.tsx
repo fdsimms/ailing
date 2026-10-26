@@ -14,6 +14,7 @@ import {
 import {
   type Api,
   ApiError,
+  type Form,
   type Length,
   type Progress,
   type Settings,
@@ -306,7 +307,18 @@ export function TopicsScreen({
       </Card>
       {settings ? (
         <>
-          <SectionLabel>Dialogue length</SectionLabel>
+          <SectionLabel>Text type</SectionLabel>
+          <Segments<Form>
+            style={styles.segments}
+            options={[
+              { value: "dialogue", label: "Dialogue" },
+              { value: "story", label: "Short story" },
+            ]}
+            value={settings.form}
+            onChange={(form) => changeSetting({ form })}
+          />
+          <Hint>{FORM_HINT[settings.form]}</Hint>
+          <SectionLabel>Length</SectionLabel>
           <Segments<Length>
             style={styles.segments}
             options={[
@@ -414,6 +426,12 @@ function TopicRow({
     </View>
   );
 }
+
+const FORM_HINT: Record<Form, string> = {
+  dialogue: "Two people talking. Applies from the next text written.",
+  story:
+    "A short story told by a narrator. Stories describe more, so they're a little harder to fit to your deck. Applies from the next text written.",
+};
 
 const STRETCH_HINT: Record<StretchWords, string> = {
   topic: "Picked from your due and newer cards to fit the topic. Applies from the next text written.",

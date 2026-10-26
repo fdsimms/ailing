@@ -104,7 +104,18 @@ brief disagree, this file is newer.
   The reader's tap targets come from the server's split.
 - **Revise rather than regenerate.** A text under the 95% floor goes back to the model with the
   unknown words named ("replace ทอน, กลิ่น"). At most 3 attempts in total.
-- **Model:** `claude-sonnet-5-5` at `medium` effort, with server-side refusal fallbacks
+- **The closest attempt is kept** (owner's decision, 26 October 2026, so texts don't fail for
+  being a little short). If none of the 3 attempts reaches the floor, the one with the highest
+  coverage is served, as long as it's at least 90% (`MINIMUM` in `coverage.py`); under 90% the text
+  is dropped as before. 90% is where the brief's evidence says listening comprehension already
+  varied widely between people. All 3 attempts are still made first, and the prompt asks the model
+  to check every word against the list before answering, so most texts meet the floor. The reader
+  notes a text under 95% ("fewer than usual") and offers to highlight the words outside the deck,
+  each of which has a gloss. Since the texts table records each text's coverage and floor, how
+  often this happens can be read from it, and the exit check's median coverage still counts these
+  texts as they are.
+- **Model:** `claude-sonnet-5-5` at `high` effort (raised from `medium` on 26 October 2026, so more
+  texts meet the floor on the first try, at the cost of more output tokens per text), with server-side refusal fallbacks
   (`fallbacks: "default"`). The owner chose Sonnet to start, at half Opus's price; revisit once real
   texts show whether its Thai holds up within the vocabulary. The reply is JSON held to a schema (`output_config.format`): a title,
   roles (who A and B are, like Waiter and Customer, shown above the lines in the reader), lines (speaker, `|`-split text, English), and glosses for words off the list. Revisions are
@@ -121,6 +132,14 @@ brief disagree, this file is newer.
   one on 3 different days (`RETURN_DAYS` in `server/src/ailing/stretch.py`). It still has to be due
   or young, so a word that has matured since is left alone. In "Fit the topic" it's offered first,
   and the model may still pass it over if it doesn't fit.
+- **Short stories** as well as dialogues: a "Text type" setting (`form` in `/api/settings`),
+  applying from the next text written. A story is told by a narrator (speaker `N`), one or two plain
+  sentences a line, and is spoken in voice A. The brief's feasibility test found narrative drops
+  coverage faster than dialogue (92.3% against 96-100%), so stories are an option, not the default,
+  and the floor and revision loop are the same for both: a story that can't reach the floor is
+  served at its closest attempt if that's 90% or more, like any other text. The system prompt describes both forms, so its cached lexicon prefix is shared;
+  the request names the form. Each text records its form (`texts.form`), so the log can show
+  whether stories rate differently.
 - **Dialogue length** is a setting: 6, 8 or 12 lines (`lines` in `/api/settings`), applying from the
   next text written. Longer dialogues have more room for unknown words before missing the floor.
 - **The model chooses stretch words to fit the topic** (the default). It gets 15 due or young
@@ -149,8 +168,8 @@ brief disagree, this file is newer.
   topic that keeps missing the floor doesn't keep spending. Each topic reports its state (`ready`,
   `writing`, `failed`, `idle`) for the app to show.
 - A text is stored as `pending` until its audio is made, then `ready`; one left pending by a
-  restart is made ready at startup. A text that missed the floor is stored as `dropped`, never
-  served, so its cost is still on record.
+  restart is made ready at startup. A text whose every attempt was under 90% is stored as
+  `dropped`, never served, so its cost is still on record.
 - A text leaves the queue once a reading is logged for it, rated or not, so the same text is never
   served twice.
 - **Topic ideas**, so topics don't all have to be thought up. About 30 everyday situations

@@ -36,6 +36,7 @@ READY_PER_FAVORITE = 1
 # How many due or young words the model chooses its stretch words from, when it's choosing.
 STRETCH_CHOICES = 15
 FAILURE_COOLDOWN = timedelta(minutes=30)
+# Every attempt was under 90% known words (coverage.MINIMUM), too far off to show.
 MISSED_FLOOR = (
     "Couldn't write a text that fits your words this time. Try again or pick another topic."
 )
@@ -191,7 +192,14 @@ class Engine:
             if not result.passed:
                 # Stored as dropped, never served, so its cost is still on record.
                 store.save_text(
-                    self.conn, topic_id, result, words, difficulty.floor, self.clock(), "dropped"
+                    self.conn,
+                    topic_id,
+                    result,
+                    words,
+                    difficulty.floor,
+                    self.clock(),
+                    "dropped",
+                    request.form,
                 )
                 log.warning(
                     "Dropped a %r text at %.1f%% after %d attempts ($%.4f)",
@@ -201,9 +209,23 @@ class Engine:
                     result.usage.cost_usd(),
                 )
                 return None
+            if not result.floor_met:
+                log.info(
+                    "Kept a %r text under the floor at %.1f%%, the closest of %d attempts",
+                    topic.name,
+                    result.coverage.ratio * 100,
+                    result.attempts,
+                )
             # Pending until its audio is made, so a text is never served half-spoken.
             text_id = store.save_text(
-                self.conn, topic_id, result, words, difficulty.floor, self.clock(), "pending"
+                self.conn,
+                topic_id,
+                result,
+                words,
+                difficulty.floor,
+                self.clock(),
+                "pending",
+                request.form,
             )
             text = store.get_text(self.conn, text_id)
             assert text is not None
@@ -215,15 +237,15 @@ class Engine:
         settings = store.load_settings(self.conn)
         start_of_today = self.clock().replace(hour=0, minute=0, second=0, microsecond=0)
         practiced = store.practiced_days(self.conn, start_of_today)
-        floor, lines = difficulty.floor, settings.lines
+        floor, lines, form = difficulty.floor, settings.lines, settings.form
         if settings.stretch_words == "any":
             stretch = pick_stretch(entries, difficulty.stretch, self.rng, practiced)
-            return TextRequest(topic, tuple(stretch), lines=lines, floor=floor)
+            return TextRequest(topic, tuple(stretch), lines=lines, floor=floor, form=form)
         choices = pick_stretch(entries, STRETCH_CHOICES, self.rng, practiced)
         if not choices:
-            return TextRequest(topic, lines=lines, floor=floor)
+            return TextRequest(topic, lines=lines, floor=floor, form=form)
         return TextRequest(
-            topic, tuple(choices), lines=lines, floor=floor, choose=difficulty.stretch
+            topic, tuple(choices), lines=lines, floor=floor, choose=difficulty.stretch, form=form
         )
 
     # ==== Audio ====

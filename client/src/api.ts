@@ -14,7 +14,11 @@ export type Word = {
   stretch: boolean;
 };
 
-export type TextLine = { speaker: "A" | "B"; english: string; words: Word[]; audio: boolean };
+// A and B are a dialogue's two speakers; N is a story's narrator.
+export type TextLine = { speaker: "A" | "B" | "N"; english: string; words: Word[]; audio: boolean };
+
+// A dialogue between two speakers, or a short story told by a narrator.
+export type Form = "dialogue" | "story";
 
 export type ReaderText = {
   id: number;
@@ -22,7 +26,8 @@ export type ReaderText = {
   title: string;
   coverage: number;
   stretch: string[];
-  roles: Partial<Record<"A" | "B", string>>; // who each speaker is; empty for older texts
+  roles: Partial<Record<"A" | "B", string>>; // who each speaker is; empty for older texts and stories
+  form: Form;
   lines: TextLine[];
 };
 
@@ -33,7 +38,7 @@ export type StretchWords = "topic" | "any";
 // How many lines a dialogue has: short, medium or long.
 export type Length = 6 | 8 | 12;
 
-export type Settings = { stretch_words: StretchWords; lines: Length };
+export type Settings = { stretch_words: StretchWords; lines: Length; form: Form };
 
 export type Rating = "too_easy" | "about_right" | "too_hard";
 
@@ -58,6 +63,7 @@ export type PastText = {
   rating: Rating | null;
   read_at: string;
   coverage: number;
+  form: Form;
 };
 
 // A word marked unknown in a reading and not cleared since.

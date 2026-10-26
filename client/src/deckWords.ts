@@ -10,3 +10,11 @@ export function isOutsideDeck(word: Word): boolean {
 export function countOutsideDeck(text: ReaderText): number {
   return text.lines.reduce((n, line) => n + line.words.filter(isOutsideDeck).length, 0);
 }
+
+// The usual floor. A text under it is the closest of the server's attempts, kept because it's still
+// at 90% or more (docs/architecture.md, Generation and coverage), so the reader says so.
+export const FLOOR = 0.95;
+
+export function underFloor(text: ReaderText): boolean {
+  return text.coverage < FLOOR;
+}

@@ -26,6 +26,10 @@ from pythainlp.util import dict_trie
 
 FLOOR = 0.95
 TARGET = 0.98
+# Below the floor after every attempt, the closest attempt is still shown if it's at least this
+# (the owner's decision, 26 October 2026; docs/architecture.md, Generation and coverage). At 90%,
+# listening comprehension already varied widely between people (docs/brief.md, evidence table).
+MINIMUM = 0.90
 
 Status = Literal["known", "partial", "unknown"]
 

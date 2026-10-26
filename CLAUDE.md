@@ -26,8 +26,10 @@ to Anki, languages other than Thai, offline mode, reimplementing FSRS, Drill and
 - **Never create Anki cards or reviews without an explicit approval step.** Mining is capped per day
   (~300 reviews/day ceiling) and happens only after the owner approves each word.
 - **Generate, then verify in code.** The model proposes text with `|` between words and stretch
-  words in `*asterisks*`; the server checks coverage and rejects texts under the floor
-  (95% floor, 98% target; listen-first aims for 98%+). Never trust the model to stay in vocabulary.
+  words in `*asterisks*`; the server checks coverage and revises texts under the floor
+  (95% floor, 98% target; listen-first aims for 98%+). Since 26 October 2026 (owner's decision), if
+  no attempt reaches the floor, the closest one is shown when it's at least 90%; under 90% is
+  rejected (`docs/architecture.md`). Never trust the model to stay in vocabulary.
 - **Token format is a `|`-split string per line.** Nested JSON token arrays truncated responses.
 - **What counts as known:** a studied word counts; a word that appears only inside a studied phrase
   is "partial" and counts as unknown for coverage. The checker is lexicon-first (the lexicon is its

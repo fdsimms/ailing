@@ -57,7 +57,7 @@ import {
   Segments,
   TextButton,
 } from "../components/ui";
-import { countOutsideDeck, isOutsideDeck } from "../deckWords";
+import { countOutsideDeck, isOutsideDeck, underFloor } from "../deckWords";
 import { type Box, scrollTarget } from "../follow";
 import { firstLine, nextLine } from "../playback";
 import { RATES } from "../playbackRate";
@@ -377,6 +377,23 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                   Every word in this text is in your deck.
                 </Text>
               ) : null}
+              {underFloor(text) ? (
+                <View style={[styles.underFloor, { backgroundColor: c.card }]}>
+                  <Text style={[styles.underFloorText, { color: c.textSecondary }]}>
+                    {`${Math.round(text.coverage * 100)}% of the words in this one are in your deck, fewer than usual. Tap any word for its meaning.`}
+                  </Text>
+                  {highlight ? null : (
+                    <PillButton
+                      label="Highlight them"
+                      quiet
+                      onPress={() => {
+                        savePrefs({ highlight: true });
+                        setHighlight(true);
+                      }}
+                    />
+                  )}
+                </View>
+              ) : null}
             </>
           )}
           {text.lines.map((line, i) => (
@@ -392,11 +409,13 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                 current === i && { backgroundColor: c.card, marginHorizontal: 0, paddingHorizontal: spacing.md },
               ]}
             >
-              <Text style={[styles.speaker, speakerColors(c, line.speaker)]}>{line.speaker}</Text>
+              {line.speaker === "N" ? null : (
+                <Text style={[styles.speaker, speakerColors(c, line.speaker)]}>{line.speaker}</Text>
+              )}
               <View style={styles.lineBody}>
                 {listenOnly ? (
                   <Text style={[styles.hiddenLine, { color: c.textTertiary }]}>
-                    {text.roles[line.speaker] ?? `Line ${i + 1}`}
+                    {(line.speaker !== "N" && text.roles[line.speaker]) || `Line ${i + 1}`}
                   </Text>
                 ) : (
                   <View style={styles.words}>
@@ -470,6 +489,7 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
           playing={status.playing}
           current={current}
           total={text.lines.length}
+          what={text.form === "story" ? "story" : "dialogue"}
           rate={rate}
           repeat={repeat}
           onToggle={togglePlay}
@@ -695,6 +715,7 @@ function PlayerBar({
   playing,
   current,
   total,
+  what,
   rate,
   repeat,
   onToggle,
@@ -704,6 +725,7 @@ function PlayerBar({
   playing: boolean;
   current: number | null;
   total: number;
+  what: "dialogue" | "story";
   rate: number;
   repeat: boolean;
   onToggle: () => void;
@@ -730,7 +752,7 @@ function PlayerBar({
         </Pressable>
         <View style={styles.playerText}>
           <Text style={[styles.playerTitle, { color: c.text }]}>
-            {current === null ? "Play the dialogue" : `Line ${current + 1} of ${total}`}
+            {current === null ? `Play the ${what}` : `Line ${current + 1} of ${total}`}
           </Text>
           <Text style={[styles.playerHint, { color: c.textSecondary }]}>
             {repeat ? "Repeating this line" : "Tap a line's ▶︎ to replay it"}
@@ -801,6 +823,16 @@ const styles = StyleSheet.create({
   },
   toggleText: { fontSize: font.md, flexShrink: 1 },
   toggleNext: { paddingTop: 0 },
+  underFloor: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.smd,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    padding: spacing.smd,
+    borderRadius: radius.md,
+  },
+  underFloorText: { flex: 1, fontSize: font.sm, lineHeight: 18 },
   toggleNote: { fontSize: font.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
   line: {
     flexDirection: "row",

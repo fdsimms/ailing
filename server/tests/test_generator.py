@@ -288,3 +288,49 @@ def test_choosing_has_the_same_limits() -> None:
     with pytest.raises(ValueError):
         TextRequest("food", (), choose=1)
     TextRequest("food", tuple(ENTRIES[:6]), choose=3)  # many to choose from is fine
+
+
+def test_a_story_is_asked_for_by_name_and_a_dialogue_by_default() -> None:
+    from ailing.generator import request_message
+
+    assert "Write a dialogue of 8 lines." in request_message(TextRequest("food"))
+    story = request_message(TextRequest("food", lines=6, form="story"))
+    assert "Write a short story of 6 lines." in story
+
+
+def test_the_system_prompt_is_the_same_for_stories_and_dialogues() -> None:
+    # The form goes in the request, so the cached lexicon prefix is shared by both.
+    prompt = system_prompt(ENTRIES)
+    assert "every line's speaker is N" in prompt
+    assert "dialogue" in prompt
+
+
+# 12 of 13 words known (92.3%), and 10 of 11 (90.9%): under the floor, over the minimum.
+NEAR = draft(*["ฉัน|อยาก|กิน|ครับ"] * 3, "ทอน")
+NEARER_MISS = draft(*["ฉัน|อยาก|กิน|ครับ"] * 2, "ฉัน|กิน", "ทอน")
+
+
+def test_when_every_attempt_misses_the_closest_one_over_90_is_kept() -> None:
+    model = ScriptedModel(NEARER_MISS, NEAR, NEARER_MISS)
+    result = run(model, TextRequest("food"))
+    assert result.passed
+    assert not result.floor_met
+    assert round(result.coverage.ratio, 3) == 0.923
+    assert result.attempts == MAX_ATTEMPTS
+    assert len(model.sent) == MAX_ATTEMPTS  # it still tried every attempt first
+    one = run(ScriptedModel(GOOD), TextRequest("food", (MANGO,))).usage
+    assert (
+        result.usage.output_tokens == one.output_tokens * MAX_ATTEMPTS
+    )  # every attempt is paid for
+
+
+def test_a_text_that_meets_the_floor_says_so() -> None:
+    assert run(ScriptedModel(GOOD), TextRequest("food", (MANGO,))).floor_met
+
+
+def test_a_text_under_90_still_fails() -> None:
+    bad = draft("ทอน|ทอน|ฉัน")
+    result = run(ScriptedModel(NEAR, bad, bad), TextRequest("food", floor=0.99))
+    # NEAR is 92.3%, under the 99% asked for but over 90%, so it's the one kept.
+    assert result.passed and not result.floor_met
+    assert not run(ScriptedModel(bad, bad, bad), TextRequest("food")).passed

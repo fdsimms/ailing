@@ -241,10 +241,18 @@ def test_a_repeated_reading_is_accepted_but_counted_once() -> None:
 
 def test_the_stretch_setting_can_be_read_and_changed() -> None:
     c = client()
-    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "topic", "lines": 8}
+    assert c.get("/api/settings", headers=AUTH).json() == {
+        "stretch_words": "topic",
+        "lines": 8,
+        "form": "dialogue",
+    }
     changed = c.patch("/api/settings", headers=AUTH, json={"stretch_words": "any"})
-    assert changed.json() == {"stretch_words": "any", "lines": 8}
-    assert c.get("/api/settings", headers=AUTH).json() == {"stretch_words": "any", "lines": 8}
+    assert changed.json() == {"stretch_words": "any", "lines": 8, "form": "dialogue"}
+    assert c.get("/api/settings", headers=AUTH).json() == {
+        "stretch_words": "any",
+        "lines": 8,
+        "form": "dialogue",
+    }
     assert (
         c.patch("/api/settings", headers=AUTH, json={"stretch_words": "loose"}).status_code == 422
     )
@@ -313,7 +321,7 @@ def test_marked_words_are_listed_with_glosses_until_cleared() -> None:
 def test_the_length_setting_can_be_changed_to_a_length_offered() -> None:
     c = client()
     changed = c.patch("/api/settings", headers=AUTH, json={"lines": 12})
-    assert changed.json() == {"stretch_words": "topic", "lines": 12}
+    assert changed.json() == {"stretch_words": "topic", "lines": 12, "form": "dialogue"}
     assert c.patch("/api/settings", headers=AUTH, json={"lines": 30}).status_code == 422
 
 
@@ -351,3 +359,18 @@ def test_suggestions_leave_out_topics_already_added_or_removed() -> None:
     assert removed["name"] not in names
     assert len(names) == len(first) - 2
     assert c.get("/api/suggestions").status_code == 401
+
+
+def test_the_form_setting_can_be_set_to_story() -> None:
+    c = client()
+    changed = c.patch("/api/settings", headers=AUTH, json={"form": "story"})
+    assert changed.json()["form"] == "story"
+    assert c.patch("/api/settings", headers=AUTH, json={"form": "poem"}).status_code == 422
+
+
+def test_a_text_says_what_form_it_is() -> None:
+    c = client()
+    read(c, "about_right", [])
+    [past] = c.get("/api/texts", headers=AUTH).json()
+    assert past["form"] == "dialogue"
+    assert c.get(f"/api/texts/{past['id']}", headers=AUTH).json()["form"] == "dialogue"
