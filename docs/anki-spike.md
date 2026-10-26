@@ -84,24 +84,24 @@ Other shape notes:
 `get_card_memory_state`, `get_due_cards`, `present_card`, `rate_card`, `add_notes`. The first milestone
 needs none of them. `rate_card` is the Milestone 2 spike.
 
-## Still needed
+## Server spike, 26 October 2026
 
-The client is written (`server/src/ailing/ankimcp.py`) and tested against a real MCP server over
-streamable HTTP. What's left is pointing it at the real tunnel:
+Run on Fly (`fly ssh console -C "python -m ailing.spike"`), through the Caddy proxy on the droplet
+(`docs/deploy.md`, step 7), with no Claude in the loop. It worked.
 
-1. The AnkiMCP endpoint URL, as `ANKIMCP_URL`.
-2. Its credential as `ANKIMCP_TOKEN`, sent as `Authorization: Bearer <token>`. If ankimcp.ai
-   authenticates another way (another header, OAuth only), `ankimcp.py` is the one place to change.
-3. Network access from wherever it runs (the Fly app) to that host.
-
-Then run the spike, which calls the three tools once, read-only, and prints what came back:
-
-```bash
-ANKIMCP_URL=... ANKIMCP_TOKEN=... uv run python -m ailing.spike   # from server/, on any machine
-fly ssh console -C "python -m ailing.spike"                         # on Fly, once the secrets are set
-```
-
-Record what it prints here, under a dated heading.
+- **The tunnel doesn't work for this.** `tunnel.ankimcp.ai` wants an OAuth login, and a static bearer
+  token got `MCPError: Invalid or expired token` at `initialize`. The proxy replaced it
+  (`docs/architecture.md`, Anki access).
+- **The add-on serves MCP at `/`**, not `/mcp` (`/mcp` returned 404). `initialize` answers
+  `serverInfo` `anki-mcp` version 1.29.1, protocol 2025-03-26.
+- `find_notes`: total 758 (it was 753 on 19 October). Keys: `count`, `hasMore`, `hint`, `limit`,
+  `message`, `noteIds`, `offset`, `query`, `total`.
+- `notes_info`: the same first three notes as before (ฉัน, ผู้หญิง, เธอ), with `Entry` and `Meaning`.
+- `cards_stats`: total 1923 (it was 1913). Keys: `cards`, `count`, `deck`, `hasMore`, `offset`,
+  `total`. Card records have the same shape as before (`cid`, `nid`, `tags`, `type`, `queue`,
+  `ivl`, `dueToday`).
+- A failed call surfaces as `unhandled errors in a TaskGroup (1 sub-exception)`, which hides the
+  real cause (here, the token error). `gateway.py` could unwrap the exception group.
 
 ## Decisions made after the spike
 
