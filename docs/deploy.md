@@ -40,7 +40,7 @@ The server starts without them, and each feature that needs one says so until it
 | `ANTHROPIC_API_KEY` | The Claude API key made for this app |
 | `AZURE_SPEECH_KEY` | The Azure Speech key |
 | `AZURE_SPEECH_REGION` | The Speech resource's region, like `eastus` |
-| `ANKIMCP_URL` | The full URL of the Anki proxy, including the path: `https://<hostname>/mcp` (step 7) |
+| `ANKIMCP_URL` | The full URL of the Anki proxy, `https://<hostname>/` (step 7); the add-on serves at `/`, not `/mcp` |
 | `ANKIMCP_TOKEN` | The proxy's bearer token, the `ANKI_PROXY_TOKEN` made in step 7 |
 | `APP_PASSPHRASE` | Made up by you. You type it once in the app on your phone |
 
@@ -104,7 +104,7 @@ survive a redeploy.
 
 The Anki add-on's own tunnel (`tunnel.ankimcp.ai`) asks for an OAuth login that only Claude's
 connector can do, so the Fly server can't use it. Instead, Caddy on the droplet puts HTTPS and a
-bearer token in front of the add-on's local server (`127.0.0.1:3141/mcp`). Port 3141 is never
+bearer token in front of the add-on's local server (`127.0.0.1:3141/`). Port 3141 is never
 exposed. The Claude connector's tunnel is untouched. Why: `docs/architecture.md`, Anki access.
 
 Files: `proxy/Caddyfile.template` and `proxy/caddy-anki-proxy.conf`. Nothing secret is in the repo:
@@ -128,7 +128,10 @@ free -m
 ```
 
 **Make the token and the env file.** `printf` is a shell builtin, so the token never appears in a
-process list. The token is shown once, here; put it in your password manager.
+process list. The token is shown once, here; put it in your password manager. Copy only the 64
+characters, and don't paste the terminal into a chat or a ticket: if the token shows up anywhere
+it shouldn't, run these commands again to replace it. Before Caddy is started nothing else needs to
+change; after, follow "Rotate the token" below.
 
 ```bash
 sudo install -m 600 -o root -g root /dev/null /etc/caddy/anki-proxy.env
@@ -169,13 +172,15 @@ sudo systemctl restart caddy
 systemctl status caddy --no-pager
 ```
 
-Caddy gets its certificate on the first request, so the first call can take a few seconds.
+Caddy asks Let's Encrypt for its certificate as soon as it starts, which needs the DNS record live
+and ports 80 and 443 open. Give it a few seconds, then look for `certificate obtained successfully`
+in `sudo journalctl -u caddy`.
 
 **Test from your laptop.** `read -rs` keeps the token out of your shell history:
 
 ```bash
 read -rs ANKI_TOKEN
-HOST=https://YOUR.HOSTNAME/mcp
+HOST=https://YOUR.HOSTNAME/
 curl -s -o /dev/null -w "%{http_code}\n" -X POST $HOST                                  # 401
 curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer wrong" $HOST   # 401
 curl -s -X POST $HOST -H "Authorization: Bearer $ANKI_TOKEN" \
@@ -192,7 +197,7 @@ Claude connector still answers, and `free -m` is similar to before.
 **Point the Fly server at it:**
 
 ```bash
-fly secrets set ANKIMCP_URL="https://YOUR.HOSTNAME/mcp" ANKIMCP_TOKEN="..."
+fly secrets set ANKIMCP_URL="https://YOUR.HOSTNAME/" ANKIMCP_TOKEN="..."
 fly ssh console -C "python -m ailing.spike"
 ```
 
