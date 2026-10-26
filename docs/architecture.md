@@ -51,13 +51,15 @@ brief disagree, this file is newer.
 - **Progress** on the topics screen: finished texts over the last 14 days against the Milestone 1
   exit check (10 texts, median coverage 95% or more, most rated "about right"), and the coverage
   target and practice word count new texts are written at, so the effect of a rating is visible.
-  Only finished readings (Done was pressed) count; a text backed out of doesn't.
+  Only finished readings count.
 - **Marked words**: every word marked unknown in a reading, newest first, with its gloss and whether
   it's in the deck, so they can be added to Anki by hand. Read-only toward Anki. "Clear" hides a
   word until it's marked again (`cleared_words` table). This is the list Milestone 3's mining queue
   would start from.
-- Leaving a text by any route logs the reading once, rated or not, which takes it off the ready queue.
-  A text left by closing the app isn't logged, so it's served again next time.
+- Finishing a text (tapping Done) logs the reading once, rated or not, which takes it off the ready
+  queue. A text left before Done (Back, or closing the app) isn't logged, so it's served again next
+  time instead of a new one being written. A listen-only pass comes after Done, so leaving it by
+  any route still logs the reading as finished.
 - When the server rejects the saved passphrase (it was changed), the app forgets it and asks again.
   Topics also has a Log out.
 

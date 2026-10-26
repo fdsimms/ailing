@@ -214,7 +214,8 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
     // Loads once per topic; `load` itself is recreated each render.
   }, [topic.id]);
 
-  // Every way out of a text logs it once, which also takes it off the ready queue.
+  // Finishing a text (Done) logs it once, which also takes it off the ready queue. Backing out
+  // before Done logs nothing, so the same text is waiting next time instead of a new one.
   async function finish(then: "next" | "back") {
     player.pause();
     if (leaving) {
@@ -225,11 +226,13 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       }
       return;
     }
-    if (text && session && !logged.current) {
+    // A listen-only pass is only offered after Done, so it counts as finished too.
+    const finished = ended || (session?.listenOnly ?? false);
+    if (text && session && finished && !logged.current) {
       logged.current = true;
       setLeaving(true);
       try {
-        await api.logReading(text.id, toLog(session, Date.now(), rating, ended));
+        await api.logReading(text.id, toLog(session, Date.now(), rating, true));
       } catch {
         // The reading is lost, not the user's place: carry on either way.
       } finally {
