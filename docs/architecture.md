@@ -153,6 +153,13 @@ brief disagree, this file is newer.
   served, so its cost is still on record.
 - A text leaves the queue once a reading is logged for it, rated or not, so the same text is never
   served twice.
+- **Topic ideas**, so topics don't all have to be thought up. About 30 everyday situations
+  (`server/src/ailing/suggestions.py`), each with six Thai words it's likely to need, offered on
+  the topics screen a few at a time, ordered by how many of those words the deck knows: the best fit
+  is most likely to clear the floor on the first try. The owner still picks (brief, principle 10).
+  A fixed list rather than generated ideas, so offering them costs nothing. Tapping one adds it as a
+  topic that isn't a favorite and opens it, so trying an idea doesn't start a queue of texts for it;
+  starring it does. Topics already added, or added and removed, aren't offered again.
 - **Removing a topic** (press and hold it) hides it from the list and the background top-up. It's
   a flag on the row, not a delete, since its texts and readings point at it. Adding a topic with the
   same name brings it back, with any text it still had ready.

@@ -47,6 +47,9 @@ export type Progress = {
   next: { floor: number; stretch: number };
 };
 
+// A topic idea not yet added. `fit` is the share of its key words the deck knows.
+export type Suggestion = { name: string; fit: number };
+
 // A text read to the end, to read or listen to again.
 export type PastText = {
   id: number;
@@ -121,7 +124,8 @@ export function createApi(
   return {
     check: () => call<void>("GET", "/api/check"),
     topics: () => call<Topic[]>("GET", "/api/topics"),
-    addTopic: (name: string) => call<Topic>("POST", "/api/topics", { name, favorite: true }),
+    addTopic: (name: string, favorite = true) => call<Topic>("POST", "/api/topics", { name, favorite }),
+    suggestions: () => call<Suggestion[]>("GET", "/api/suggestions"),
     setFavorite: (id: number, favorite: boolean) =>
       call<Topic>("PATCH", `/api/topics/${id}`, { favorite }),
     removeTopic: (id: number) => call<void>("DELETE", `/api/topics/${id}`),

@@ -6,6 +6,7 @@
     POST  /api/topics                 {name, favorite?} adds a topic (or returns the existing one)
     PATCH /api/topics/{id}            {favorite}
     DELETE /api/topics/{id}           removes a topic from the list (adding it again brings it back)
+    GET   /api/suggestions            topic ideas not yet added, the best fit for the deck first
     POST  /api/topics/{id}/next       the next text for a topic; 202 {"writing": true} while one is
                                       being written in the background, so ask again shortly
     GET   /api/settings               {stretch_words: "topic" | "any", lines: 6 | 8 | 12}
@@ -38,6 +39,7 @@ from ailing.generator import Ask, claude_ask
 from ailing.lexicon import Entry
 from ailing.reader import gloss_for, render
 from ailing.store import Length, Reading, Settings, StoredText, StretchWords, Topic
+from ailing.suggestions import suggest
 from ailing.tts import AudioCache, azure_synthesize
 
 # The window the progress summary covers: the Milestone 1 exit check's two weeks.
@@ -122,6 +124,13 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         if not store.remove_topic(engine.conn, topic_id):
             raise HTTPException(404, "No such topic.")
         return Response(status_code=204)
+
+    @app.get("/api/suggestions", dependencies=authed)
+    async def suggestions() -> list[dict[str, Any]]:
+        _, lexicon = engine.snapshot()
+        return [
+            {"name": s.name, "fit": s.fit} for s in suggest(lexicon, store.topic_names(engine.conn))
+        ]
 
     @app.post("/api/topics/{topic_id}/next", dependencies=authed)
     async def next_text(topic_id: int, background: BackgroundTasks) -> Any:
