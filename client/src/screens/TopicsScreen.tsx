@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 
-import { type Api, ApiError, type Progress, type StretchWords, type Topic } from "../api";
+import { type Api, ApiError, type Length, type Progress, type Settings, type StretchWords, type Topic } from "../api";
 import { Card, ErrorNote, Hint, PillButton, SectionLabel, Segments, TextButton } from "../components/ui";
 import { describeProgress } from "../progress";
 import { font, radius, spacing, useColors } from "../theme";
@@ -23,11 +23,13 @@ export function TopicsScreen({
   api,
   onOpen,
   onWords,
+  onPast,
   onLogOut,
 }: {
   api: Api;
   onOpen: (topic: Topic) => void;
   onWords: () => void;
+  onPast: () => void;
   onLogOut: () => void;
 }) {
   const c = useColors();
@@ -37,7 +39,7 @@ export function TopicsScreen({
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-  const [stretchWords, setStretchWords] = useState<StretchWords | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [settingError, setSettingError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [markedCount, setMarkedCount] = useState<number | null>(null);
@@ -69,20 +71,17 @@ export function TopicsScreen({
 
   // Loaded on its own, so the topics still show if this fails.
   useEffect(() => {
-    api.settings().then(
-      (s) => setStretchWords(s.stretch_words),
-      () => {},
-    );
+    api.settings().then(setSettings, () => {});
   }, [api]);
 
-  async function changeStretchWords(value: StretchWords) {
-    const before = stretchWords;
-    setStretchWords(value);
+  async function changeSetting(change: Partial<Settings>) {
+    const before = settings;
+    setSettings((s) => (s ? { ...s, ...change } : s));
     setSettingError(null);
     try {
-      setStretchWords((await api.updateSettings({ stretch_words: value })).stretch_words);
+      setSettings(await api.updateSettings(change));
     } catch (e) {
-      setStretchWords(before);
+      setSettings(before);
       setSettingError(e instanceof ApiError ? e.message : "Couldn't change that setting. Try again.");
     }
   }
@@ -219,13 +218,27 @@ export function TopicsScreen({
       </View>
       {addError ? <ErrorNote message={addError} /> : null}
       <Hint>New topics start as favorites, so a text is written for them right away.</Hint>
-      <SectionLabel>Your words</SectionLabel>
+      <SectionLabel>Your reading</SectionLabel>
       <Card>
+        <Pressable
+          onPress={onPast}
+          accessibilityRole="button"
+          accessibilityHint="Read or listen to a text again"
+          style={({ pressed }) => [styles.rowBody, styles.wordsRow, { opacity: pressed ? 0.7 : 1 }]}
+        >
+          <Text style={[styles.name, { color: c.text }]}>Past texts</Text>
+          <Text style={[styles.chevron, { color: c.textTertiary }]}>›</Text>
+        </Pressable>
         <Pressable
           onPress={onWords}
           accessibilityRole="button"
           accessibilityLabel={markedCount === null ? "Marked words" : `Marked words, ${markedCount}`}
-          style={({ pressed }) => [styles.rowBody, styles.wordsRow, { opacity: pressed ? 0.7 : 1 }]}
+          style={({ pressed }) => [
+            styles.rowBody,
+            styles.wordsRow,
+            { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.separator },
+            { opacity: pressed ? 0.7 : 1 },
+          ]}
         >
           <Text style={[styles.name, { color: c.text }]}>Marked words</Text>
           {markedCount !== null ? (
@@ -234,20 +247,32 @@ export function TopicsScreen({
           <Text style={[styles.chevron, { color: c.textTertiary }]}>›</Text>
         </Pressable>
       </Card>
-      {stretchWords ? (
+      {settings ? (
         <>
+          <SectionLabel>Dialogue length</SectionLabel>
+          <Segments<Length>
+            style={styles.segments}
+            options={[
+              { value: 6, label: "Short" },
+              { value: 8, label: "Medium" },
+              { value: 12, label: "Long" },
+            ]}
+            value={settings.lines}
+            onChange={(lines) => changeSetting({ lines })}
+          />
+          <Hint>{`${settings.lines} lines. Applies from the next text written.`}</Hint>
           <SectionLabel>Stretch words</SectionLabel>
-          <Segments
+          <Segments<StretchWords>
             style={styles.segments}
             options={[
               { value: "topic", label: "Fit the topic" },
               { value: "any", label: "Any due word" },
             ]}
-            value={stretchWords}
-            onChange={changeStretchWords}
+            value={settings.stretch_words}
+            onChange={(stretch_words) => changeSetting({ stretch_words })}
           />
           {settingError ? <ErrorNote message={settingError} /> : null}
-          <Hint>{STRETCH_HINT[stretchWords]}</Hint>
+          <Hint>{STRETCH_HINT[settings.stretch_words]}</Hint>
         </>
       ) : null}
       <View style={styles.logOut}>

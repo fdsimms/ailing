@@ -105,9 +105,14 @@ class StoredText:
 StretchWords = Literal["topic", "any"]
 
 
+# How many lines a dialogue has: short, medium or long.
+Length = Literal[6, 8, 12]
+
+
 @dataclass(frozen=True)
 class Settings:
     stretch_words: StretchWords = "topic"
+    lines: Length = 8
 
 
 @dataclass(frozen=True)
@@ -374,6 +379,45 @@ def progress(conn: sqlite3.Connection, since: datetime) -> Progress:
     coverages = [coverage for coverage, _ in rows]
     median = statistics.median(coverages) if coverages else None
     return Progress(len(rows), median, ratings)
+
+
+def practiced_days(conn: sqlite3.Connection, before: datetime) -> dict[str, int]:
+    """For each word that was a stretch word in a text read before `before`, the number of
+    different days it was one."""
+    rows = conn.execute(
+        """SELECT DISTINCT substr(r.logged_at, 1, 10), x.stretch FROM readings r
+           JOIN texts x ON x.id = r.text_id WHERE r.logged_at < ?""",
+        (before.isoformat(),),
+    )
+    days: dict[str, set[str]] = {}
+    for day, stretch in rows:
+        for word in json.loads(stretch):
+            days.setdefault(word, set()).add(day)
+    return {word: len(d) for word, d in days.items()}
+
+
+@dataclass(frozen=True)
+class PastText:
+    id: int
+    topic: str
+    title: str
+    rating: str | None
+    read_at: datetime
+    coverage: float
+
+
+def past_texts(conn: sqlite3.Connection, limit: int) -> list[PastText]:
+    """Texts read to the end, most recent first."""
+    rows = conn.execute(
+        """SELECT x.id, t.name, x.title, r.rating, r.logged_at, x.coverage FROM readings r
+           JOIN texts x ON x.id = r.text_id JOIN topics t ON t.id = x.topic_id
+           WHERE r.finished = 1 ORDER BY r.id DESC LIMIT ?""",
+        (limit,),
+    )
+    return [
+        PastText(i, topic, title, rating, datetime.fromisoformat(at), coverage)
+        for i, topic, title, rating, at, coverage in rows
+    ]
 
 
 # ==== Marked words ====

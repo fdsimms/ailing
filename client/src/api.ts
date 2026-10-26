@@ -30,7 +30,10 @@ export type ReaderText = {
 // "any": it's given words from that list at random and has to fit them in.
 export type StretchWords = "topic" | "any";
 
-export type Settings = { stretch_words: StretchWords };
+// How many lines a dialogue has: short, medium or long.
+export type Length = 6 | 8 | 12;
+
+export type Settings = { stretch_words: StretchWords; lines: Length };
 
 export type Rating = "too_easy" | "about_right" | "too_hard";
 
@@ -42,6 +45,16 @@ export type Progress = {
   median_coverage: number | null;
   ratings: Record<Rating | "none", number>;
   next: { floor: number; stretch: number };
+};
+
+// A text read to the end, to read or listen to again.
+export type PastText = {
+  id: number;
+  topic: string;
+  title: string;
+  rating: Rating | null;
+  read_at: string;
+  coverage: number;
 };
 
 // A word marked unknown in a reading and not cleared since.
@@ -120,6 +133,9 @@ export function createApi(
     // null while the server is still writing the text (202): ask again in a few seconds.
     nextText: async (topicId: number) =>
       (await call<ReaderText | undefined>("POST", `/api/topics/${topicId}/next`)) ?? null,
+    pastTexts: () => call<PastText[]>("GET", "/api/texts"),
+    // A past text, to read again. Reading it again isn't logged.
+    text: (textId: number) => call<ReaderText>("GET", `/api/texts/${textId}`),
     logReading: (textId: number, log: ReadingLog) =>
       call<void>("POST", `/api/texts/${textId}/reading`, log),
     // For the audio player, which fetches the file itself and so needs the passphrase too.

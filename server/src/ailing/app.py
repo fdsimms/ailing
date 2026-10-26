@@ -8,8 +8,10 @@
     DELETE /api/topics/{id}           removes a topic from the list (adding it again brings it back)
     POST  /api/topics/{id}/next       the next text for a topic; 202 {"writing": true} while one is
                                       being written in the background, so ask again shortly
-    GET   /api/settings               {stretch_words: "topic" | "any"}
+    GET   /api/settings               {stretch_words: "topic" | "any", lines: 6 | 8 | 12}
     PATCH /api/settings               the same fields; takes effect from the next text written
+    GET   /api/texts                  texts read to the end, newest first, to read again
+    GET   /api/texts/{id}             one text, in the same shape as /next; reading it again isn't logged
     POST  /api/texts/{id}/reading     logs a session with a text and adjusts difficulty
     GET   /api/progress               finished texts, coverage and ratings over the last 14 days,
                                       and the difficulty the next text is written at
@@ -35,11 +37,13 @@ from ailing.engine import Engine, NotAvailable, NotFound
 from ailing.generator import Ask, claude_ask
 from ailing.lexicon import Entry
 from ailing.reader import gloss_for, render
-from ailing.store import Reading, Settings, StretchWords, Topic
+from ailing.store import Length, Reading, Settings, StoredText, StretchWords, Topic
 from ailing.tts import AudioCache, azure_synthesize
 
 # The window the progress summary covers: the Milestone 1 exit check's two weeks.
 PROGRESS_DAYS = 14
+# How many past texts the list shows.
+PAST_TEXTS = 50
 
 
 class NewTopic(BaseModel):
@@ -57,6 +61,7 @@ class ClearWord(BaseModel):
 
 class SettingsUpdate(BaseModel):
     stretch_words: StretchWords | None = None
+    lines: Length | None = None
 
 
 class ReadingIn(BaseModel):
@@ -129,12 +134,28 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         if text is None:
             return JSONResponse({"writing": True}, status_code=202)
         background.add_task(engine.top_up)
-        entries, lexicon = engine.snapshot()
-        out = render(text, lexicon, {e.text: e.meaning for e in entries})
-        speaks = engine.audio is not None and engine.synthesize is not None
-        for i, line in enumerate(out["lines"]):
-            line["audio"] = speaks or engine.has_audio(text.id, i)
-        return out
+        return _rendered(text, engine)
+
+    @app.get("/api/texts", dependencies=authed)
+    async def past_texts() -> list[dict[str, Any]]:
+        return [
+            {
+                "id": t.id,
+                "topic": t.topic,
+                "title": t.title,
+                "rating": t.rating,
+                "read_at": t.read_at.isoformat(),
+                "coverage": t.coverage,
+            }
+            for t in store.past_texts(engine.conn, PAST_TEXTS)
+        ]
+
+    @app.get("/api/texts/{text_id}", dependencies=authed)
+    async def get_text(text_id: int) -> dict[str, Any]:
+        text = store.get_text(engine.conn, text_id)
+        if text is None or store.text_status(engine.conn, text_id) == "dropped":
+            raise HTTPException(404, "No such text.")
+        return _rendered(text, engine)
 
     @app.get("/api/texts/{text_id}/lines/{line}/audio", dependencies=authed)
     async def line_audio(text_id: int, line: int) -> FileResponse:
@@ -153,7 +174,10 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
     @app.patch("/api/settings", dependencies=authed)
     async def update_settings(body: SettingsUpdate) -> dict[str, Any]:
         current = store.load_settings(engine.conn)
-        updated = Settings(stretch_words=body.stretch_words or current.stretch_words)
+        updated = Settings(
+            stretch_words=body.stretch_words or current.stretch_words,
+            lines=body.lines or current.lines,
+        )
         store.save_settings(engine.conn, updated)
         return updated.__dict__
 
@@ -210,6 +234,15 @@ def create_app(engine: Engine, passphrase: str | None) -> FastAPI:
         return Response(status_code=204)
 
     return app
+
+
+def _rendered(text: StoredText, engine: Engine) -> dict[str, Any]:
+    entries, lexicon = engine.snapshot()
+    out = render(text, lexicon, {e.text: e.meaning for e in entries})
+    speaks = engine.audio is not None and engine.synthesize is not None
+    for i, line in enumerate(out["lines"]):
+        line["audio"] = speaks or engine.has_audio(text.id, i)
+    return out
 
 
 def _topic(t: Topic, engine: Engine) -> dict[str, Any]:

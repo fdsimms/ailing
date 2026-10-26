@@ -8,6 +8,11 @@
 // words marked unknown). The gloss popover is a transparent Modal, so a tap's page coordinates
 // place it directly.
 //
+// ==== Reading again ====
+// A past text opens in the same reader with nothing logged: no Done, no rating, and no marking words
+// unknown, since a second reading of a text isn't recorded. One rated "About right" can be played
+// with the Thai hidden straight away.
+//
 // ==== Listen only ====
 // Once a text is rated "About right", the end view offers to play it again with the Thai hidden
 // (docs/brief.md, design principle 6). The lines show who's speaking instead, the dialogue plays from
@@ -40,7 +45,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { type Api, ApiError, type Rating, type ReaderText, type Topic, type Word } from "../api";
+import { type Api, ApiError, type PastText, type Rating, type ReaderText, type Topic, type Word } from "../api";
 import {
   Card,
   ErrorNote,
@@ -78,7 +83,11 @@ const WRITE_WAIT_MS = 4 * 60_000;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; onBack: () => void }) {
+// A new text on a topic, or a past text to read again.
+export type ReaderSource = { kind: "topic"; topic: Topic } | { kind: "past"; text: PastText };
+
+export function ReaderScreen({ api, source, onBack }: { api: Api; source: ReaderSource; onBack: () => void }) {
+  const review = source.kind === "past";
   const c = useColors();
   const [text, setText] = useState<ReaderText | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +118,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
   const [playingAll, setPlayingAll] = useState(false);
   const [rate, setRate] = useState(prefs().rate);
   const [silentLine, setSilentLine] = useState<number | null>(null);
+  const [repeat, setRepeat] = useState(false);
 
   const scroller = useRef<ScrollView>(null);
   const lineBoxes = useRef<Box[]>([]);
@@ -155,7 +165,12 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
 
   useEffect(() => {
     if (!status.didJustFinish || current === null || !text) return;
-    const next = nextLine(text.lines, current, playingAll);
+    const next = nextLine(text.lines, current, playingAll, repeat);
+    if (next === current) {
+      // The same source again: rewind rather than reload it.
+      player.seekTo(0).then(() => player.play(), () => {});
+      return;
+    }
     if (next !== null) playLine(next, true);
     else setPlayingAll(false);
     // Reacts to a line ending only.
@@ -189,8 +204,16 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
     scrollY.current = 0;
     logged.current = false;
     try {
+      if (source.kind === "past") {
+        const past = await api.text(source.text.id);
+        if (!stillWanted()) return;
+        setText(past);
+        setSession(startSession(past, Date.now()));
+        return;
+      }
+      const topicId = source.topic.id;
       const deadline = Date.now() + WRITE_WAIT_MS;
-      let next = await api.nextText(topic.id);
+      let next = await api.nextText(topicId);
       while (next === null) {
         if (!stillWanted()) return;
         setWriting(true);
@@ -199,7 +222,7 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
         }
         await wait(POLL_MS);
         if (!stillWanted()) return;
-        next = await api.nextText(topic.id);
+        next = await api.nextText(topicId);
       }
       if (!stillWanted()) return;
       setText(next);
@@ -211,8 +234,8 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
 
   useEffect(() => {
     load();
-    // Loads once per topic; `load` itself is recreated each render.
-  }, [topic.id]);
+    // Loads once per source; `load` itself is recreated each render.
+  }, [source]);
 
   // Finishing a text (Done) logs it once, which also takes it off the ready queue. Backing out
   // before Done logs nothing, so the same text is waiting next time instead of a new one.
@@ -226,9 +249,10 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       }
       return;
     }
-    // A listen-only pass is only offered after Done, so it counts as finished too.
+    // A listen-only pass is only offered after Done, so it counts as finished too. Reading a
+    // past text again is never logged.
     const finished = ended || (session?.listenOnly ?? false);
-    if (text && session && finished && !logged.current) {
+    if (text && session && finished && !review && !logged.current) {
       logged.current = true;
       setLeaving(true);
       try {
@@ -268,7 +292,11 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
 
   return (
     <View style={styles.root}>
-      <NavBar back="Topics" title={topic.name} onBack={() => finish("back")} />
+      <NavBar
+        back={review ? "Past texts" : "Topics"}
+        title={source.kind === "topic" ? source.topic.name : source.text.topic}
+        onBack={() => finish("back")}
+      />
       {error ? <ErrorNote message={error} onRetry={load} /> : null}
       {!text && !error ? (
         <View style={styles.loading}>
@@ -308,6 +336,12 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
                   </View>
                 ) : null,
               )}
+            </View>
+          ) : null}
+          {review && !listenOnly && source.text.rating === "about_right" && firstLine(text.lines) !== null ? (
+            <View style={styles.listenOnly}>
+              <Text style={[styles.toggleText, { color: c.textSecondary }]}>You rated this about right</Text>
+              <PillButton label="Listen without the text" quiet onPress={listenWithoutText} />
             </View>
           ) : null}
           {listenOnly ? (
@@ -417,15 +451,17 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
               </View>
             </View>
           ))}
-          <View style={styles.doneButton}>
-            <PrimaryButton
-              label="Done"
-              onPress={() => {
-                player.pause();
-                setEnded(true);
-              }}
-            />
-          </View>
+          {review ? null : (
+            <View style={styles.doneButton}>
+              <PrimaryButton
+                label="Done"
+                onPress={() => {
+                  player.pause();
+                  setEnded(true);
+                }}
+              />
+            </View>
+          )}
         </ScrollView>
       ) : null}
 
@@ -435,8 +471,10 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
           current={current}
           total={text.lines.length}
           rate={rate}
+          repeat={repeat}
           onToggle={togglePlay}
           onRate={changeRate}
+          onRepeat={() => setRepeat((r) => !r)}
         />
       ) : null}
       {text && !ended && firstLine(text.lines) === null ? (
@@ -508,7 +546,9 @@ export function ReaderScreen({ api, topic, onBack }: { api: Api; topic: Topic; o
       <GlossPopover
         tapped={tapped}
         flagged={tapped && session ? isFlagged(session, tapped.word.text) : false}
-        onToggleFlag={() => tapped && session && setSession(toggleFlag(session, tapped.word.text))}
+        onToggleFlag={
+          review ? null : () => tapped && session && setSession(toggleFlag(session, tapped.word.text))
+        }
         onClose={() => setTapped(null)}
       />
     </View>
@@ -603,7 +643,7 @@ function GlossPopover({
 }: {
   tapped: Tapped | null;
   flagged: boolean;
-  onToggleFlag: () => void;
+  onToggleFlag: (() => void) | null; // null when marking isn't recorded (reading a past text)
   onClose: () => void;
 }) {
   const c = useColors();
@@ -641,9 +681,11 @@ function GlossPopover({
         <Text style={[styles.popWord, { color: c.text }]}>{tapped.word.text}</Text>
         <Text style={[styles.popGloss, { color: c.text }]}>{tapped.word.gloss ?? "No meaning available"}</Text>
         <Text style={[styles.popStatus, { color: c.textSecondary }]}>{status}</Text>
-        <View style={styles.popActions}>
-          <PillButton label={flagged ? "Unmark" : "Mark as unknown"} onPress={onToggleFlag} />
-        </View>
+        {onToggleFlag ? (
+          <View style={styles.popActions}>
+            <PillButton label={flagged ? "Unmark" : "Mark as unknown"} onPress={onToggleFlag} />
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -654,15 +696,19 @@ function PlayerBar({
   current,
   total,
   rate,
+  repeat,
   onToggle,
   onRate,
+  onRepeat,
 }: {
   playing: boolean;
   current: number | null;
   total: number;
   rate: number;
+  repeat: boolean;
   onToggle: () => void;
   onRate: (rate: number) => void;
+  onRepeat: () => void;
 }) {
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -686,8 +732,22 @@ function PlayerBar({
           <Text style={[styles.playerTitle, { color: c.text }]}>
             {current === null ? "Play the dialogue" : `Line ${current + 1} of ${total}`}
           </Text>
-          <Text style={[styles.playerHint, { color: c.textSecondary }]}>Tap a line's ▶︎ to replay it</Text>
+          <Text style={[styles.playerHint, { color: c.textSecondary }]}>
+            {repeat ? "Repeating this line" : "Tap a line's ▶︎ to replay it"}
+          </Text>
         </View>
+        <Pressable
+          onPress={onRepeat}
+          accessibilityRole="switch"
+          accessibilityLabel="Repeat line"
+          accessibilityState={{ checked: repeat }}
+          style={({ pressed }) => [
+            styles.repeat,
+            { backgroundColor: repeat ? c.accentSubtle : c.tertiary, opacity: pressed ? 0.7 : 1 },
+          ]}
+        >
+          <Text style={[styles.repeatText, { color: repeat ? c.accentText : c.textSecondary }]}>Repeat line</Text>
+        </Pressable>
       </View>
       <Segments
         options={RATES.map((r) => ({ value: r, label: `${r.toFixed(1)}×`, accessibilityLabel: `Speed ${r}` }))}
@@ -838,6 +898,8 @@ const styles = StyleSheet.create({
   playerRow: { flexDirection: "row", alignItems: "center", gap: 14 },
   play: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
   playIcon: { fontSize: font.xl },
+  repeat: { borderRadius: radius.full, paddingHorizontal: spacing.smd, paddingVertical: spacing.sm },
+  repeatText: { fontSize: font.sm, fontWeight: "600" },
   playerText: { flex: 1 },
   playerTitle: { fontSize: font.md, fontWeight: "600" },
   playerHint: { fontSize: font.sm, marginTop: 2 },

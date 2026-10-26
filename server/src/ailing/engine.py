@@ -212,13 +212,19 @@ class Engine:
             return text
 
     def _request(self, topic: str, entries: list[Entry], difficulty: Difficulty) -> TextRequest:
-        if store.load_settings(self.conn).stretch_words == "any":
-            stretch = pick_stretch(entries, difficulty.stretch, self.rng)
-            return TextRequest(topic, tuple(stretch), floor=difficulty.floor)
-        choices = pick_stretch(entries, STRETCH_CHOICES, self.rng)
+        settings = store.load_settings(self.conn)
+        start_of_today = self.clock().replace(hour=0, minute=0, second=0, microsecond=0)
+        practiced = store.practiced_days(self.conn, start_of_today)
+        floor, lines = difficulty.floor, settings.lines
+        if settings.stretch_words == "any":
+            stretch = pick_stretch(entries, difficulty.stretch, self.rng, practiced)
+            return TextRequest(topic, tuple(stretch), lines=lines, floor=floor)
+        choices = pick_stretch(entries, STRETCH_CHOICES, self.rng, practiced)
         if not choices:
-            return TextRequest(topic, floor=difficulty.floor)
-        return TextRequest(topic, tuple(choices), floor=difficulty.floor, choose=difficulty.stretch)
+            return TextRequest(topic, lines=lines, floor=floor)
+        return TextRequest(
+            topic, tuple(choices), lines=lines, floor=floor, choose=difficulty.stretch
+        )
 
     # ==== Audio ====
 
