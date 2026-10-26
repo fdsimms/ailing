@@ -121,6 +121,14 @@ brief disagree, this file is newer.
   one on 3 different days (`RETURN_DAYS` in `server/src/ailing/stretch.py`). It still has to be due
   or young, so a word that has matured since is left alone. In "Fit the topic" it's offered first,
   and the model may still pass it over if it doesn't fit.
+- **Short stories** as well as dialogues: a "Text type" setting (`form` in `/api/settings`),
+  applying from the next text written. A story is told by a narrator (speaker `N`), one or two plain
+  sentences a line, and is spoken in voice A. The brief's feasibility test found narrative drops
+  coverage faster than dialogue (92.3% against 96-100%), so stories are an option, not the default,
+  and the floor and revision loop are unchanged: a story that can't reach the floor is dropped like
+  any other text. The system prompt describes both forms, so its cached lexicon prefix is shared;
+  the request names the form. Each text records its form (`texts.form`), so the log can show
+  whether stories rate differently.
 - **Dialogue length** is a setting: 6, 8 or 12 lines (`lines` in `/api/settings`), applying from the
   next text written. Longer dialogues have more room for unknown words before missing the floor.
 - **The model chooses stretch words to fit the topic** (the default). It gets 15 due or young

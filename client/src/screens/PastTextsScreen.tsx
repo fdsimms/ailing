@@ -73,7 +73,12 @@ export function PastTextsScreen({
           <>
             <Card>
               {texts.map((t, i) => {
-                const meta = [t.topic, shortDate(t.read_at), t.rating ? RATING_TEXT[t.rating] : null]
+                const meta = [
+                  t.topic,
+                  t.form === "story" ? "Story" : null,
+                  shortDate(t.read_at),
+                  t.rating ? RATING_TEXT[t.rating] : null,
+                ]
                   .filter(Boolean)
                   .join(" · ");
                 return (

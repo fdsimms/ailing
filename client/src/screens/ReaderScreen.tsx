@@ -392,11 +392,13 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                 current === i && { backgroundColor: c.card, marginHorizontal: 0, paddingHorizontal: spacing.md },
               ]}
             >
-              <Text style={[styles.speaker, speakerColors(c, line.speaker)]}>{line.speaker}</Text>
+              {line.speaker === "N" ? null : (
+                <Text style={[styles.speaker, speakerColors(c, line.speaker)]}>{line.speaker}</Text>
+              )}
               <View style={styles.lineBody}>
                 {listenOnly ? (
                   <Text style={[styles.hiddenLine, { color: c.textTertiary }]}>
-                    {text.roles[line.speaker] ?? `Line ${i + 1}`}
+                    {(line.speaker !== "N" && text.roles[line.speaker]) || `Line ${i + 1}`}
                   </Text>
                 ) : (
                   <View style={styles.words}>
@@ -470,6 +472,7 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
           playing={status.playing}
           current={current}
           total={text.lines.length}
+          what={text.form === "story" ? "story" : "dialogue"}
           rate={rate}
           repeat={repeat}
           onToggle={togglePlay}
@@ -695,6 +698,7 @@ function PlayerBar({
   playing,
   current,
   total,
+  what,
   rate,
   repeat,
   onToggle,
@@ -704,6 +708,7 @@ function PlayerBar({
   playing: boolean;
   current: number | null;
   total: number;
+  what: "dialogue" | "story";
   rate: number;
   repeat: boolean;
   onToggle: () => void;
@@ -730,7 +735,7 @@ function PlayerBar({
         </Pressable>
         <View style={styles.playerText}>
           <Text style={[styles.playerTitle, { color: c.text }]}>
-            {current === null ? "Play the dialogue" : `Line ${current + 1} of ${total}`}
+            {current === null ? `Play the ${what}` : `Line ${current + 1} of ${total}`}
           </Text>
           <Text style={[styles.playerHint, { color: c.textSecondary }]}>
             {repeat ? "Repeating this line" : "Tap a line's ▶︎ to replay it"}
