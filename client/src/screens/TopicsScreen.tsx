@@ -11,8 +11,18 @@ import {
   View,
 } from "react-native";
 
-import { type Api, ApiError, type Length, type Progress, type Settings, type StretchWords, type Topic } from "../api";
+import {
+  type Api,
+  ApiError,
+  type Length,
+  type Progress,
+  type Settings,
+  type StretchWords,
+  type Suggestion,
+  type Topic,
+} from "../api";
 import { Card, ErrorNote, Hint, PillButton, SectionLabel, Segments, TextButton } from "../components/ui";
+import { ideaPage } from "../ideas";
 import { describeProgress } from "../progress";
 import { font, radius, spacing, useColors } from "../theme";
 
@@ -43,6 +53,9 @@ export function TopicsScreen({
   const [settingError, setSettingError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [markedCount, setMarkedCount] = useState<number | null>(null);
+  const [ideas, setIdeas] = useState<Suggestion[]>([]);
+  const [ideaPageIndex, setIdeaPageIndex] = useState(0);
+  const [opening, setOpening] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -62,6 +75,7 @@ export function TopicsScreen({
     await Promise.all([
       api.progress().then(setProgress, () => {}),
       api.markedWords().then((ws) => setMarkedCount(ws.length), () => {}),
+      api.suggestions().then(setIdeas, () => {}),
     ]);
   }, [api]);
 
@@ -93,6 +107,21 @@ export function TopicsScreen({
     const id = setInterval(load, WRITING_POLL_MS);
     return () => clearInterval(id);
   }, [writing, load]);
+
+  // An idea opens straight away, as a topic that isn't a favorite, so trying one doesn't start a
+  // queue of texts for it. Starring it afterwards does.
+  async function openIdea(name: string) {
+    if (opening) return;
+    setOpening(name);
+    setAddError(null);
+    try {
+      const topic = await api.addTopic(name, false);
+      onOpen(topic);
+    } catch (e) {
+      setAddError(e instanceof ApiError ? e.message : "Couldn't open that topic. Try again.");
+      setOpening(null);
+    }
+  }
 
   async function add() {
     const name = newName.trim();
@@ -203,11 +232,39 @@ export function TopicsScreen({
       ) : null}
       {topics && topics.length > 0 ? <Hint>Press and hold a topic to remove it.</Hint> : null}
 
+      {ideas.length > 0 ? (
+        <>
+          <SectionLabel>Ideas</SectionLabel>
+          <View style={styles.ideas}>
+            {ideaPage(ideas, ideaPageIndex).map((idea) => (
+              <Pressable
+                key={idea.name}
+                onPress={() => openIdea(idea.name)}
+                disabled={opening !== null}
+                accessibilityRole="button"
+                accessibilityHint="Opens a text on this topic"
+                style={({ pressed }) => [
+                  styles.idea,
+                  { backgroundColor: c.card, opacity: pressed || (opening && opening !== idea.name) ? 0.6 : 1 },
+                ]}
+              >
+                {opening === idea.name ? <ActivityIndicator size="small" /> : null}
+                <Text style={[styles.ideaText, { color: c.text }]}>{idea.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {ideas.length > ideaPage(ideas, 0).length ? (
+            <TextButton label="More ideas" onPress={() => setIdeaPageIndex((p) => p + 1)} />
+          ) : null}
+          <Hint>Ideas that use more of your deck come first. Tap one to read about it, and star it to keep texts coming.</Hint>
+        </>
+      ) : null}
+
       <SectionLabel>New topic</SectionLabel>
       <View style={[styles.field, { backgroundColor: c.card }]}>
         <TextInput
           style={[styles.input, { color: c.text }]}
-          placeholder="e.g. Asking for directions"
+          placeholder="Type your own"
           placeholderTextColor={c.textTertiary}
           value={newName}
           onChangeText={setNewName}
@@ -413,6 +470,16 @@ const styles = StyleSheet.create({
   segments: { marginHorizontal: spacing.md },
   logOut: { marginTop: spacing.lg },
   wordsRow: { paddingLeft: spacing.md },
+  ideas: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, paddingHorizontal: spacing.md },
+  idea: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.smd,
+    paddingVertical: spacing.sm,
+  },
+  ideaText: { fontSize: font.md },
   progress: { padding: spacing.md, gap: spacing.xs },
   progressHeadline: { fontSize: font.lg, fontWeight: "600" },
   progressDetail: { fontSize: font.md, lineHeight: 21 },
