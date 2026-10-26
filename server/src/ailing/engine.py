@@ -36,6 +36,7 @@ READY_PER_FAVORITE = 1
 # How many due or young words the model chooses its stretch words from, when it's choosing.
 STRETCH_CHOICES = 15
 FAILURE_COOLDOWN = timedelta(minutes=30)
+# Every attempt was under 90% known words (coverage.MINIMUM), too far off to show.
 MISSED_FLOOR = (
     "Couldn't write a text that fits your words this time. Try again or pick another topic."
 )
@@ -208,6 +209,13 @@ class Engine:
                     result.usage.cost_usd(),
                 )
                 return None
+            if not result.floor_met:
+                log.info(
+                    "Kept a %r text under the floor at %.1f%%, the closest of %d attempts",
+                    topic.name,
+                    result.coverage.ratio * 100,
+                    result.attempts,
+                )
             # Pending until its audio is made, so a text is never served half-spoken.
             text_id = store.save_text(
                 self.conn,

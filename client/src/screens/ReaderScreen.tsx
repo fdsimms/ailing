@@ -57,7 +57,7 @@ import {
   Segments,
   TextButton,
 } from "../components/ui";
-import { countOutsideDeck, isOutsideDeck } from "../deckWords";
+import { countOutsideDeck, isOutsideDeck, underFloor } from "../deckWords";
 import { type Box, scrollTarget } from "../follow";
 import { firstLine, nextLine } from "../playback";
 import { RATES } from "../playbackRate";
@@ -376,6 +376,23 @@ export function ReaderScreen({ api, source, onBack }: { api: Api; source: Reader
                 <Text style={[styles.toggleNote, { color: c.textTertiary }]}>
                   Every word in this text is in your deck.
                 </Text>
+              ) : null}
+              {underFloor(text) ? (
+                <View style={[styles.underFloor, { backgroundColor: c.card }]}>
+                  <Text style={[styles.underFloorText, { color: c.textSecondary }]}>
+                    {`${Math.round(text.coverage * 100)}% of the words in this one are in your deck, fewer than usual. Tap any word for its meaning.`}
+                  </Text>
+                  {highlight ? null : (
+                    <PillButton
+                      label="Highlight them"
+                      quiet
+                      onPress={() => {
+                        savePrefs({ highlight: true });
+                        setHighlight(true);
+                      }}
+                    />
+                  )}
+                </View>
               ) : null}
             </>
           )}
@@ -806,6 +823,16 @@ const styles = StyleSheet.create({
   },
   toggleText: { fontSize: font.md, flexShrink: 1 },
   toggleNext: { paddingTop: 0 },
+  underFloor: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.smd,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    padding: spacing.smd,
+    borderRadius: radius.md,
+  },
+  underFloorText: { flex: 1, fontSize: font.sm, lineHeight: 18 },
   toggleNote: { fontSize: font.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
   line: {
     flexDirection: "row",

@@ -303,3 +303,34 @@ def test_the_system_prompt_is_the_same_for_stories_and_dialogues() -> None:
     prompt = system_prompt(ENTRIES)
     assert "every line's speaker is N" in prompt
     assert "dialogue" in prompt
+
+
+# 12 of 13 words known (92.3%), and 10 of 11 (90.9%): under the floor, over the minimum.
+NEAR = draft(*["ฉัน|อยาก|กิน|ครับ"] * 3, "ทอน")
+NEARER_MISS = draft(*["ฉัน|อยาก|กิน|ครับ"] * 2, "ฉัน|กิน", "ทอน")
+
+
+def test_when_every_attempt_misses_the_closest_one_over_90_is_kept() -> None:
+    model = ScriptedModel(NEARER_MISS, NEAR, NEARER_MISS)
+    result = run(model, TextRequest("food"))
+    assert result.passed
+    assert not result.floor_met
+    assert round(result.coverage.ratio, 3) == 0.923
+    assert result.attempts == MAX_ATTEMPTS
+    assert len(model.sent) == MAX_ATTEMPTS  # it still tried every attempt first
+    one = run(ScriptedModel(GOOD), TextRequest("food", (MANGO,))).usage
+    assert (
+        result.usage.output_tokens == one.output_tokens * MAX_ATTEMPTS
+    )  # every attempt is paid for
+
+
+def test_a_text_that_meets_the_floor_says_so() -> None:
+    assert run(ScriptedModel(GOOD), TextRequest("food", (MANGO,))).floor_met
+
+
+def test_a_text_under_90_still_fails() -> None:
+    bad = draft("ทอน|ทอน|ฉัน")
+    result = run(ScriptedModel(NEAR, bad, bad), TextRequest("food", floor=0.99))
+    # NEAR is 92.3%, under the 99% asked for but over 90%, so it's the one kept.
+    assert result.passed and not result.floor_met
+    assert not run(ScriptedModel(bad, bad, bad), TextRequest("food")).passed

@@ -97,6 +97,10 @@ constraints.
    sell this mode as a replacement for reviews.
 2. **Coverage floor 95%, target 98%.** Texts below 95% known words are regenerated, not shown.
    Listen-first texts aim for 98% or higher, since speech can't be reread.
+
+   > **Changed on 26 October 2026 by the owner.** A text under the floor is still revised, but if
+   > no attempt reaches it, the closest attempt is shown when it's at least 90% known words, with a
+   > note in the reader. Under 90% is still rejected. See `docs/architecture.md`.
 3. **What counts as known:** a word studied in a review card counts; a word that only appears inside
    a studied phrase (รับ inside รับอะไรดี) counts as partial and is treated as unknown for coverage.
    Weight word choice toward mature cards (interval of 21 days or more) using `cards_stats`.

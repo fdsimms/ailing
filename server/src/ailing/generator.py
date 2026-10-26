@@ -5,7 +5,8 @@ The rules this enforces come from docs/brief.md (design principles 2, 4, 5 and 8
 - coverage is measured by the server's own segmentation, never by the model's `|` breaks
 - 1-3 stretch words, each used 2-3 times; when the model chooses them from a longer list, at least
   one and no more than it was asked for
-- at most 3 attempts; a text that still misses the floor is returned as not passed, never shown
+- at most 3 attempts while a draft is under the floor; then the closest attempt is kept if it's at
+  least MINIMUM (90%), and only a text under that is returned as not passed, never shown
 
 The revision loop is written against `Ask`, so it's tested without a key. `claude_ask` is the real
 call: the lexicon sits in a cached system prompt, and each revision is appended to the same
@@ -20,11 +21,11 @@ from typing import Any, Literal, cast
 import anthropic
 from anthropic.types.beta import BetaMessageParam, BetaOutputConfigParam, BetaTextBlockParam
 
-from ailing.coverage import FLOOR, Coverage, Lexicon, check
+from ailing.coverage import FLOOR, MINIMUM, Coverage, Lexicon, check
 from ailing.lexicon import Entry
 
 MODEL = "claude-sonnet-5-5"
-EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "high"
 MAX_TOKENS = 16000
 MAX_ATTEMPTS = 3
 MAX_STRETCH = 3
@@ -113,11 +114,12 @@ class Generated:
     glosses: dict[str, str]
     coverage: Coverage
     attempts: int
-    passed: bool
+    passed: bool  # shown to the reader: it met the floor, or it's the closest attempt at MINIMUM+
     missing_glosses: tuple[str, ...]
     usage: Usage = Usage()
     stretch: tuple[str, ...] = ()  # the stretch words the text actually uses
     roles: dict[str, str] = field(default_factory=dict)  # speaker -> who they are, e.g. "Waiter"
+    floor_met: bool = True  # False for a closest attempt kept under the floor
 
 
 DRAFT_SCHEMA: dict[str, Any] = {
@@ -166,6 +168,9 @@ Rules:
 on its own: รับ is not known just because รับอะไรดี is. Every word outside the list makes the text \
 harder; the server measures this and sends back any text under the learner's coverage target.
 - Prefer entries marked M (well known) over Y (still being learned).
+- Before you answer, go through your draft word by word and check each one is on the list. Replace \
+any that isn't with a listed word or a simpler way of saying it. Getting this right first time \
+matters more than a clever text.
 - A dialogue is natural, everyday spoken Thai between two speakers, A and B. In "roles", say who \
 A and B are in this situation, in one to three English words each, like "Waiter" and "Customer".
 - A story is told by a narrator: every line's speaker is N, each line is one or two simple \
@@ -239,6 +244,7 @@ def revision_message(coverage: Coverage, stretch_problems: list[str], floor: flo
 async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generated:
     messages: list[dict[str, Any]] = [{"role": "user", "content": request_message(request)}]
     result: Generated | None = None
+    best: Generated | None = None  # the attempt with the highest coverage, the later one on a tie
     usage = Usage()
     for attempt in range(1, MAX_ATTEMPTS + 1):
         draft, content, used = await ask(messages)
@@ -247,6 +253,8 @@ async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generate
         result = replace(result, usage=usage)
         if result.passed:
             return result
+        if best is None or result.coverage.ratio >= best.coverage.ratio:
+            best = result
         if attempt < MAX_ATTEMPTS:
             messages.append({"role": "assistant", "content": content})
             messages.append(
@@ -255,7 +263,16 @@ async def generate(ask: Ask, lexicon: Lexicon, request: TextRequest) -> Generate
                     "content": revision_message(result.coverage, stretch_problems, request.floor),
                 }
             )
-    assert result is not None
+    assert result is not None and best is not None
+    if best.coverage.ratio >= MINIMUM:
+        # Every attempt missed (the floor, or only a stretch word rule): keep the closest one.
+        return replace(
+            best,
+            passed=True,
+            floor_met=best.coverage.meets(request.floor),
+            attempts=result.attempts,
+            usage=usage,
+        )
     return result
 
 
