@@ -1,0 +1,27 @@
+# Deploys the server to Fly when a change to it lands on main. Needs a FLY_API_TOKEN repo secret
+# (`fly tokens create deploy` from server/). docs/deploy.md has the one-time setup.
+name: Deploy server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running one rather than cancelling it.
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        working-directory: server
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
