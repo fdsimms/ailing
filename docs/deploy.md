@@ -97,8 +97,13 @@ look before going further.
 
 ## 6. Redeploy after a change
 
-Run `fly deploy` from `server/` again. The database and audio cache are on the volume, so they
-survive a redeploy.
+Merging a change under `server/` to `main` deploys it automatically
+(`.github/workflows/deploy-server.yml`). It needs one repo secret, `FLY_API_TOKEN`: run
+`fly tokens create deploy` from `server/` and add the result under the repo's Settings, Secrets and
+variables, Actions. The workflow can also be run by hand from the Actions tab.
+
+To deploy by hand, run `fly deploy` from `server/`. The database and audio cache are on the volume,
+so they survive a redeploy.
 
 ## 7. Anki proxy (on the droplet)
 
